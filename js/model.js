@@ -1,0 +1,784 @@
+// GameModel — faithful JS port of GameModel.swift
+import { Rarity, RARITY_LABEL, RARITY_COLOR, fishPool, secretFishPool, OLD_MAN, OLDMAN_HEAT,
+         UPGRADES, UPGRADE_COSTS, RushRules, rushStatus, ESCAPE, makeEscapeReport,
+         cardFXSpec, MASH_NEED, rand, randInt, pick } from "./data.js";
+
+const LS = window.localStorage;
+const store = {
+  getInt(k, d = 0) { const v = LS.getItem(k); return v === null ? d : (parseInt(v, 10) || 0); },
+  set(k, v) { LS.setItem(k, String(v)); },
+  getJSON(k, d) { try { const v = LS.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+};
+
+// 魚図鑑 persistence — name -> [count, maxCm]
+export const dex = {
+  records: store.getJSON("fishDex", {}),
+  log(name, cm) {
+    const e = this.records[name] || [0, 0];
+    e[0] += 1; e[1] = Math.max(e[1], cm);
+    this.records[name] = e;
+    LS.setItem("fishDex", JSON.stringify(this.records));
+  },
+  entry(name) { const e = this.records[name] || [0, 0]; return { count: e[0], maxCm: e[1] }; },
+  get caughtSpecies() { return Object.keys(this.records).length; },
+  get totalSpecies() { return fishPool.reduce((a, s) => a + s.length, 0); },
+  get caughtSecrets() { return secretFishPool.filter(f => this.entry(f.name).count > 0).length; },
+};
+
+export class GameModel {
+  constructor(fx, snd, haptics) {
+    this.fx = fx; this.snd = snd; this.haptics = haptics;
+
+    this.phase = "title";           // title idle charging flying waiting reach mash reveal escaping rushEnding
+    this.score = 0;
+    this.medals = store.getInt("medals");
+    this.combo = 0;
+    this.rushLeft = 0;
+    this.rushActive = false;
+    this.rushSummary = null;
+    this.banner = null;             // {id,text,sub,style,ttl}
+    this.prompt = "";
+    this.promptHot = false;
+    this.flash = null;              // {color:[r,g,b], opacity}
+    this.reveal = null;             // Caught
+    this.chargePower = 0;
+    this.tension = 0;
+    this.mashCount = 0;
+    this.mashFill = 0;
+    this.mashRemain = 0;
+    this.mashTapsLeft = null;
+    this.escapeReport = null;
+    this.autoCast = false;
+    this.autoPower = 0.65;
+    this.oldManCue = null;          // {id,line,heat}
+    this.bestScore = store.getInt("bestScore");
+    this.bestCm = store.getInt("bestCm");
+
+    // upgrades
+    this.rareLv = store.getInt("up_rare");
+    this.reelLv = store.getInt("up_reel");
+    this.rushLv = store.getInt("up_rush");
+
+    // internals
+    this.now = 0;
+    this.pending = [];
+    this.result = null;             // Rarity | null (null = miss)
+    this.reachKind = 0;             // 0 normal 1 long 2 super 3 premium 4 rainbow
+    this.biteTimer = 0;
+    this.landed = false;
+    this.battleT = 0;
+    this.spike = 0;
+    this.mashT = 0;
+    this.mashDur = 3;
+    this.mashNeed = 12;
+    this.mashDone = false;
+    this.rushCasts = 0;
+    this.rushStartScore = 0;
+    this.escapeShownAt = 0;
+    this.ambientArmed = false;
+
+    // debug: URL params ?rig=ur ?fast ?go ?win ?secret ?mashneed=0.2 ?rush=10
+    const q = new URLSearchParams(location.search);
+    this.rig = q.get("rig");
+    this.fast = q.has("fast");
+    this.autoStart = q.has("go");
+    this.autoWin = q.has("win");
+    this.forceSecret = q.has("secret");
+    this.mashMult = parseFloat(q.get("mashneed") || "1") || 1;
+    this.debugRush = parseInt(q.get("rush") || "", 10) || null;
+  }
+
+  get rushStatus() { return rushStatus(this.rushLeft); }
+  get rushBonusProbability() { return RushRules.bonusProbability(this.rareLv, this.reelLv); }
+
+  // ---- shop ----
+  level(i) { return [this.rareLv, this.reelLv, this.rushLv][i]; }
+  nextCost(i) { const lv = this.level(i); return lv < UPGRADE_COSTS.length ? UPGRADE_COSTS[lv] : null; }
+  buyUpgrade(i) {
+    const cost = this.nextCost(i);
+    if (cost === null || this.medals < cost) return false;
+    this.medals -= cost;
+    store.set("medals", this.medals);
+    const lv = this.level(i) + 1;
+    if (i === 0) { this.rareLv = lv; store.set("up_rare", lv); }
+    if (i === 1) { this.reelLv = lv; store.set("up_reel", lv); }
+    if (i === 2) { this.rushLv = lv; store.set("up_rush", lv); }
+    this.snd.play("coin");
+    return true;
+  }
+  setMedals(v) { this.medals = v; store.set("medals", v); }
+
+  // ---- clock / scheduler ----
+  tick(dt) {
+    if (this.autoStart && this.phase === "title") this.startGame();
+    this.now += dt;
+    while (this.pending.length && this.pending[0].t <= this.now) {
+      const p = this.pending.shift();
+      p.act();
+    }
+    switch (this.phase) {
+      case "charging":
+        this.chargePower = Math.min(1, this.chargePower + dt / 0.9);
+        break;
+      case "reach":
+        this.battleT += dt;
+        this.spike = Math.max(0, this.spike - dt * 0.5);
+        this.tension = Math.min(1.1, 0.32 + 0.28 * Math.sin(this.battleT * 3.2) + this.reachKind * 0.07 + this.spike);
+        break;
+      case "mash":
+        this.mashT += dt;
+        this.mashRemain = Math.max(0, this.mashDur - this.mashT);
+        if (this.autoWin) this.onMashTap();
+        if (this.mashRemain <= 0) this.resolveMash();
+        break;
+    }
+  }
+
+  schedule(after, act) {
+    this.pending.push({ t: this.now + after, act });
+    this.pending.sort((a, b) => a.t - b.t);
+  }
+
+  showBanner(text, sub = "", style = "info", ttl = 1.6) {
+    const b = { id: Math.random().toString(36).slice(2), text, sub, style, ttl };
+    this.banner = b;
+    this.schedule(ttl, () => { if (this.banner?.id === b.id) this.banner = null; });
+  }
+
+  doFlash(rgb, opacity = 0.55, ttl = 0.18) {
+    this.flash = { color: rgb, opacity };
+    this.schedule(ttl, () => { this.flash = null; });
+  }
+
+  // ---- game flow ----
+  startGame() {
+    this.snd.prepare();
+    if (this.debugRush !== null && this.debugRush >= 1 && this.debugRush <= 99) {
+      this.rushActive = true;
+      this.rushLeft = this.debugRush;
+      this.rushCasts = 0;
+      this.rushStartScore = this.score;
+    }
+    this.snd.bgm(this.rushActive ? "rush" : "idle");
+    this.phase = "idle";
+    this.prompt = "CASTボタン長押しでキャスト";
+    this.fx.resetScene();
+    this.fx.setRushLook(this.rushActive);
+    this.scheduleAmbient();
+    if (this.autoStart) this.schedule(0.3, () => this.performCast(0.8));
+  }
+
+  pressCast() {
+    if (this.phase !== "idle") return;
+    this.autoCast = false;
+    this.phase = "charging";
+    this.chargePower = 0;
+    this.snd.play("charge");
+  }
+
+  releaseCast() {
+    if (this.phase !== "charging") return;
+    const power = 0.35 + 0.65 * this.chargePower;
+    this.autoPower = power;
+    this.performCast(power);
+  }
+
+  performCast(power) {
+    this.phase = "flying";
+    this.prompt = "";
+    this.chargePower = 0;
+    this.snd.play("cast");
+    this.fx.castLure(power);
+    let isLastCast = false;
+    if (this.rushActive && this.rushLeft > 0) {
+      this.rushLeft -= 1;
+      this.rushCasts += 1;
+      isLastCast = this.rushLeft === 0;
+      if (this.rushLeft <= RushRules.warningSpins) {
+        this.snd.play(this.rushLeft === 0 ? "countgo" : "count");
+      }
+    }
+    this.haptics.play({ name: isLastCast ? "lastCast" : "castRelease", power });
+    this.schedule(0.45, () => this.land(power));
+  }
+
+  toggleAuto() {
+    this.autoCast = !this.autoCast;
+    if (this.autoCast && this.phase === "idle") {
+      this.prompt = `AUTO: 強さ${Math.round(this.autoPower * 100)}%で連投中`;
+      this.schedule(0.5, () => this.autoFire());
+    }
+    if (!this.autoCast && this.phase === "idle") {
+      this.prompt = "CASTボタン長押しでキャスト";
+    }
+  }
+
+  autoFire() {
+    if (!this.autoCast || this.phase !== "idle") return;
+    this.performCast(this.autoPower);
+  }
+
+  land(power) {
+    this.landed = true;
+    this.snd.play("splash");
+    this.fx.lureLanded();
+    this.fx.splashFX(power > 0.85);
+    this.haptics.play({ name: "lureLanded", big: power > 0.85 });
+    this.phase = "waiting";
+    this.biteTimer = this.fast ? 0.3 : rand(1.0, 3.0) - power * 0.4;
+    this.rollResult();
+    this.scheduleTeasers(this.biteTimer);
+    this.schedule(this.biteTimer, () => this.bite());
+    if (Math.random() < 0.35 && this.biteTimer > 1.2) {
+      this.schedule(this.biteTimer * 0.55, () => {
+        if (this.phase !== "waiting") return;
+        this.fx.bobberDip(0.4);
+        this.snd.play("tick");
+        this.haptics.play({ name: "nibble" });
+      });
+    }
+  }
+
+  // ---- bite & reach ----
+  bite() {
+    this.pickReach();
+    this.fx.bobberDip(1);
+    this.snd.play("bite");
+    this.haptics.play({ name: "bite" });
+    this.runReach();
+  }
+
+  rollResult() {
+    if (this.rig) {
+      this.result = Object.prototype.hasOwnProperty.call(Rarity, this.rig) ? Rarity[this.rig] : null;
+      return;
+    }
+    let r = Math.random();
+    r = RushRules.boost(r, this.rareLv);
+    this.result = this.rarityForRoll(r);
+    this.applyGearLimits();
+  }
+
+  rarityForRoll(r) {
+    if (this.rushActive) {
+      if (r < RushRules.missThreshold) return null;
+      if (r < 0.36) return Rarity.n;
+      if (r < 0.52) return Rarity.r;
+      if (r < RushRules.bonusThreshold) return Rarity.sr;
+      if (r < 0.82) return Rarity.ssr;
+      if (r < 0.95) return Rarity.ur;
+      return Rarity.lr;
+    }
+    if (r < 0.42) return null;
+    if (r < 0.62) return Rarity.n;
+    if (r < 0.76) return Rarity.r;
+    if (r < 0.87) return Rarity.sr;
+    if (r < 0.95) return Rarity.ssr;
+    if (r < 0.985) return Rarity.ur;
+    return Rarity.lr;
+  }
+
+  get missThreshold() { return this.rushActive ? RushRules.missThreshold : 0.42; }
+
+  applyGearLimits() {
+    const cap = RushRules.rarityCap(this.rareLv);
+    if (this.result !== null && this.result > cap) this.result = cap;
+    if (this.result === null && Math.random() < RushRules.reelRescueProbability(this.reelLv)) {
+      let r2 = rand(this.missThreshold, 1.0);
+      r2 = RushRules.reelBoost(r2, this.reelLv);
+      const res = this.rarityForRoll(r2) ?? Rarity.n;
+      this.result = Math.min(res, cap);
+    }
+  }
+
+  pickReach() {
+    if (this.rig === "bluff") { this.reachKind = 2; return; }
+    const r = Math.random();
+    const res = this.result;
+    if (res === null) this.reachKind = r < 0.70 ? 0 : (r < 0.92 ? 1 : 2);
+    else if (res === Rarity.n) this.reachKind = r < 0.8 ? 0 : 1;
+    else if (res === Rarity.r) this.reachKind = r < 0.5 ? 0 : (r < 0.9 ? 1 : 2);
+    else if (res === Rarity.sr) this.reachKind = r < 0.55 ? 1 : (r < 0.95 ? 2 : 3);
+    else if (res === Rarity.ssr) this.reachKind = r < 0.7 ? 2 : 3;
+    else if (res === Rarity.ur) this.reachKind = 3;
+    else this.reachKind = 4;
+  }
+
+  // ---- teasers ----
+  scheduleTeasers(delay) {
+    if (delay <= 0.6) return;
+    const roll = Math.random();
+    let hot = false, mild = false;
+    const res = this.result;
+    if (res === null) { hot = roll < 0.05; mild = roll < 0.25; }
+    else if (res <= Rarity.r) { hot = roll < 0.10; mild = roll < 0.35; }
+    else if (res === Rarity.sr) { hot = roll < 0.20; mild = roll < 0.60; }
+    else if (res === Rarity.ssr) { hot = roll < 0.40; mild = roll < 0.80; }
+    else if (res === Rarity.ur) { hot = roll < 0.60; mild = roll < 0.92; }
+    else { hot = roll < 0.85; mild = true; }
+
+    if (Math.random() < 0.55) {
+      const ambient = [
+        () => this.fx.teaserFishJump(),
+        () => this.fx.teaserBirds(randInt(3, 5), false),
+        () => this.fx.teaserBoat(),
+        () => { this.fx.teaserCloud(true); this.schedule(4, () => this.fx.teaserCloud(false)); },
+        () => this.fx.teaserSchool(),
+      ];
+      const p = pick(ambient);
+      this.schedule(delay * rand(0.25, 0.6), p);
+    }
+
+    if (mild) {
+      const mildEvents = [
+        () => this.fx.teaserBirds(randInt(7, 10), false),
+        () => this.fx.teaserWaterGlow(),
+        () => this.showOldMan(pick(OLD_MAN.mild), "warm"),
+      ];
+      const p = pick(mildEvents);
+      this.schedule(delay * rand(0.4, 0.7), p);
+    }
+
+    if (hot) {
+      const r = Math.random();
+      this.schedule(delay * rand(0.55, 0.8), () => {
+        if (this.result === Rarity.lr && r < 0.5) {
+          this.showOldMan(pick(OLD_MAN.premium), "premium");
+        } else if (r < 0.4) {
+          this.fx.teaserRainbow();
+        } else if (r < 0.7) {
+          this.fx.teaserBirds(1, true);
+        } else if (r < 0.85) {
+          this.fx.teaserRain(true);
+          this.schedule(2.2, () => this.fx.teaserRain(false));
+          this.schedule(2.6, () => this.fx.teaserRainbow());
+        } else {
+          this.showOldMan(pick(OLD_MAN.hot), "hot");
+        }
+      });
+    }
+  }
+
+  showOldMan(line, heat = "normal") {
+    if (this.phase !== "idle" && this.phase !== "waiting" && this.phase !== "reach") return;
+    if (this.oldManCue && OLDMAN_HEAT[this.oldManCue.heat].isCutIn && !OLDMAN_HEAT[heat].isCutIn) return;
+    const cue = { id: Math.random().toString(36).slice(2), line, heat };
+    this.oldManCue = cue;
+    if (OLDMAN_HEAT[heat].isCutIn) {
+      this.snd.play("cutin");
+      this.haptics.play({ name: "cutIn", premium: heat === "premium" });
+      this.fx.shake(heat === "premium" ? 5 : 3);
+    }
+    this.schedule(OLDMAN_HEAT[heat].duration, () => {
+      if (this.oldManCue?.id === cue.id) this.oldManCue = null;
+    });
+  }
+
+  scheduleAmbient() {
+    if (this.ambientArmed) return;
+    this.ambientArmed = true;
+    this.schedule(rand(4, 9), () => {
+      this.ambientArmed = false;
+      if (this.phase !== "idle") return;
+      switch (randInt(0, 5)) {
+        case 0: this.fx.teaserFishJump(); break;
+        case 1: this.fx.teaserBirds(randInt(3, 6), false); break;
+        case 2: this.fx.teaserBoat(); break;
+        case 3: this.showOldMan(pick(OLD_MAN.idle)); break;
+        case 4:
+          this.fx.teaserCloud(true);
+          this.schedule(4.5, () => this.fx.teaserCloud(false));
+          break;
+        default: this.fx.teaserSchool();
+      }
+      this.scheduleAmbient();
+    });
+  }
+
+  runReach() {
+    this.phase = "reach";
+    this.battleT = 0;
+    this.spike = 0;
+    const k = this.reachKind;
+    this.fx.shadowSize([0.3, 0.45, 0.7, 0.9, 1.1][k]);
+    this.fx.setFightLook(true);
+    this.fx.setOrbit([1.8, 2.5, 4.2, 4.0, 5.2][k], [42, 55, 70, 80, 90][k], true);
+    this.fx.setAura(k);
+    this.fx.setSpeedLines(k >= 2 ? k : 0);
+
+    const dur = [2.4, 4.2, 6.2, 8.2, 9.6][k];
+    const lunges = [1, 2, 4, 6, 7][k];
+    for (let i = 0; i < lunges; i++) {
+      this.schedule(0.6 + dur * i / lunges, () => this.battleLunge(k >= 2));
+    }
+
+    if (k === 0) {
+      this.showBanner("食いついた!", "", "info", 1.2);
+    } else if (k === 1) {
+      this.showBanner("引いてる…!", "", "info", 1.4);
+      this.schedule(1.6, () => this.showBanner("粘ってるぞ…", "", "info", 1.2));
+    } else if (k === 2) {
+      this.enterSuperLook();
+      this.schedule(0.1, () => this.showBanner("大物の影だ!!", "スーパーバトルリーチ", "hot", 1.8));
+      for (let i = 0; i < 7; i++) {
+        this.schedule(0.5 + i * 0.7, () => { this.snd.play("heart"); this.haptics.play({ name: "heartbeat", level: 2 }); });
+      }
+      this.schedule(3.4, () => this.showBanner("まだ逃げてない…!!", "", "hot", 1.4));
+      this.schedule(4.9, () => this.showBanner("手前まで来た!!", "", "hot", 1.2));
+    } else if (k === 3) {
+      this.enterPremiumLook(false);
+      this.schedule(0.1, () => this.showBanner("ゴールデンバトル!!", "確変大物の激闘…!", "gold", 2.2));
+      for (let i = 0; i < 8; i++) {
+        this.schedule(0.5 + i * 0.65, () => { this.snd.play("heart"); this.haptics.play({ name: "heartbeat", level: 3 }); });
+      }
+      this.schedule(3.0, () => this.showBanner("折れそうだ…!!", "", "gold", 1.4));
+      for (let i = 0; i < 3; i++) {
+        this.schedule(5.4 + i * 0.7, () => {
+          this.prompt = `${3 - i}`; this.promptHot = true;
+          this.snd.play("count"); this.haptics.play({ name: "countdown", step: i }); this.fx.shake(6);
+        });
+      }
+      this.schedule(7.6, () => { this.prompt = "GO!!"; this.snd.play("countgo"); });
+    } else {
+      this.enterPremiumLook(true);
+      this.schedule(0.1, () => this.showBanner("!?!?", "この引きは…何だ!?", "rainbow", 1.8));
+      this.schedule(2.0, () => this.showBanner("虹色バトル!!!", "伝説確定!?", "rainbow", 2.4));
+      for (let i = 0; i < 8; i++) {
+        this.schedule(0.6 + i * 0.75, () => {
+          this.fx.sparkleBurst([255, 255, 255]); this.snd.play("heart"); this.haptics.play({ name: "heartbeat", level: 4 });
+        });
+      }
+      this.schedule(6.4, () => this.showBanner("伝説が暴れてる!!!", "", "rainbow", 1.6));
+      for (let i = 0; i < 3; i++) {
+        this.schedule(7.0 + i * 0.7, () => {
+          this.prompt = `${3 - i}`; this.promptHot = true;
+          this.snd.play("count"); this.haptics.play({ name: "countdown", step: i }); this.fx.shake(7);
+        });
+      }
+      this.schedule(9.1, () => { this.prompt = "GO!!"; this.snd.play("countgo"); });
+    }
+    this.schedule(dur, () => this.endReach());
+  }
+
+  battleLunge(strong) {
+    this.spike = Math.min(0.45, this.spike + (strong ? 0.34 : 0.22));
+    this.fx.bobberDip(strong ? 1.4 : 0.9);
+    this.fx.splashFX(strong);
+    this.fx.shake(strong ? 7 : 3);
+    if (strong) this.fx.shockwave(false);
+    this.snd.play(strong ? "surge" : "bite");
+    this.haptics.play({ name: "surge", strong });
+  }
+
+  endReach() {
+    if (this.phase !== "reach") return;
+    if (this.result === null && this.reachKind <= 1) {
+      this.escape("逃げられた…");
+    } else {
+      this.beginMash();
+    }
+  }
+
+  enterSuperLook() {
+    this.snd.bgm("reach");
+    this.snd.play("siren");
+    this.snd.play("cutin");
+    this.snd.play("thunder");
+    this.fx.setOrbit(4.5, 70, true);
+    this.fx.zoomTo(1.5);
+    this.fx.shake(4);
+    this.fx.lightningFX();
+    this.doFlash([255, 0, 0], 0.35, 0.25);
+  }
+
+  enterPremiumLook(rainbow) {
+    this.snd.bgm("reach");
+    this.snd.play("cutin");
+    this.snd.play("riser");
+    this.snd.play("thunder");
+    this.fx.setOrbit(rainbow ? 5.5 : 4.0, 78, true);
+    this.fx.zoomTo(rainbow ? 2.0 : 1.75);
+    this.doFlash(rainbow ? [168, 85, 247] : [255, 214, 10], 0.5, 0.35);
+    this.fx.shake(8);
+    this.fx.lightningFX();
+    for (let i = 0; i < 3; i++) {
+      this.schedule(0.8 + i * 0.9, () =>
+        this.fx.sparkleBurst(rainbow ? [255, 45, 150] : [255, 214, 10]));
+    }
+    if (rainbow) {
+      for (let i = 0; i < 3; i++) {
+        this.schedule(2.4 + i * 1.9, () => {
+          this.fx.lightningFX();
+          this.snd.play("thunder");
+          this.fx.shake(5);
+        });
+      }
+    }
+  }
+
+  // ---- mash ----
+  beginMash() {
+    if (this.phase !== "reach") return;
+    this.oldManCue = null;
+    this.phase = "mash";
+    this.mashT = 0;
+    this.mashCount = 0;
+    this.mashFill = 0;
+    this.mashDone = false;
+    this.mashDur = 2.4 + 0.32 * this.reachKind + 0.4 * this.reelLv;
+    this.mashNeed = Math.floor((this.result === null ? 999 : MASH_NEED[this.result]) * this.mashMult);
+    this.mashTapsLeft = this.result === null ? null : this.mashNeed;
+    this.prompt = "連打!!";
+    this.promptHot = true;
+    this.snd.play("cutin");
+    this.fx.zoomTo(1.3);
+    this.fx.setSpeedLines(Math.max(3, this.reachKind));
+    this.fx.setOrbit(3.0, 30, true);
+    this.showBanner("連打!!", "画面を連打で引き上げろ!", "hot", 1.3);
+  }
+
+  tapScreen() {
+    switch (this.phase) {
+      case "mash": this.onMashTap(); break;
+      case "reach":
+        this.snd.play("tick");
+        this.fx.splashFX(false);
+        break;
+      case "reveal": this.dismissReveal(); break;
+      case "title": this.startGame(); break;
+      case "rushEnding": this.dismissRushSummary(); break;
+      case "escaping": this.dismissEscape(); break;
+    }
+  }
+
+  onMashTap() {
+    if (this.mashDone) return;
+    this.mashCount += 1;
+    this.snd.play("reel");
+    this.fx.bobberDip(0.5);
+    this.fx.shockwave(false);
+    if (this.mashCount % 6 === 0) { this.fx.shake(4); this.fx.splashFX(true); }
+    const raw = this.mashCount / Math.max(1, this.mashNeed);
+    this.mashFill = this.result === null
+      ? Math.min(raw, 0.85 + 0.04 * Math.sin(this.mashT * 9))
+      : Math.min(1, raw);
+    if (this.result !== null) this.mashTapsLeft = Math.max(0, this.mashNeed - this.mashCount);
+    this.haptics.play({ name: "mashTap", progress: this.mashFill, closing: (1 <= this.mashTapsLeft && this.mashTapsLeft <= 5) });
+    if (this.result !== null && this.mashCount >= this.mashNeed) {
+      const perfect = this.mashCount >= Math.floor(this.mashNeed * 1.25);
+      this.resolveCatch(perfect);
+    }
+  }
+
+  resolveMash() {
+    if (this.result !== null && this.mashCount >= this.mashNeed) {
+      this.resolveCatch(false);
+    } else if (this.result !== null) {
+      const fish = pick(fishPool[this.result]);
+      const report = makeEscapeReport(
+        { type: "lineBreak", rarity: this.result, fishName: fish.name, img: fish.img,
+          cm: randInt(fish.cm[0], fish.cm[1]), discovered: dex.entry(fish.name).count > 0 },
+        this.mashCount, this.mashNeed);
+      this.escape("", report);
+    } else {
+      this.escape("", makeEscapeReport({ type: "bluff" }, this.mashCount, this.mashNeed));
+    }
+  }
+
+  resolveCatch(perfect) {
+    if (this.phase !== "mash" || this.mashDone) return;
+    this.mashDone = true;
+    this.prompt = "";
+    this.snd.play("hook");
+    this.snd.play("impact");
+    this.haptics.play({ name: "hook" });
+    this.fx.hookLunge();
+    this.fx.splashFX(true);
+    this.fx.shockwave(true);
+    if (perfect) {
+      this.showBanner("激連打 PERFECT!!", "", "gold", 1.0);
+      this.snd.play("perfect");
+    }
+    const r = this.result ?? Rarity.n;
+    this.schedule(0.55, () => this.caught(perfect, r <= Rarity.r));
+  }
+
+  // ---- resolve ----
+  caught(perfect, small) {
+    this.oldManCue = null;
+    const r = this.result ?? Rarity.n;
+    let chosen = pick(fishPool[r]);
+    let isSecret = false;
+    if (this.forceSecret || (this.rareLv >= UPGRADE_COSTS.length && Math.random() < 0.04)) {
+      chosen = pick(secretFishPool);
+      isSecret = true;
+    }
+    const cm = randInt(chosen.cm[0], chosen.cm[1]);
+    dex.log(chosen.name, cm);
+    let sc = chosen.score;
+    if (perfect) sc = Math.floor(sc * 1.5);
+    if (this.rushActive) sc *= 2;
+    sc = Math.floor(sc * (1 + Math.min(0.5, this.combo * 0.08)));
+    const isRecord = cm > this.bestCm;
+    if (isRecord) { this.bestCm = cm; store.set("bestCm", cm); }
+    this.score += sc;
+    if (this.score > this.bestScore) { this.bestScore = this.score; store.set("bestScore", this.score); }
+    const medal = Math.max(1, Math.floor(sc / 12));
+    this.medals += medal;
+    store.set("medals", this.medals);
+    this.combo += 1;
+
+    const rushGain = RushRules.gain(r, this.rushActive, this.rushLv);
+
+    this.reveal = { name: chosen.name, img: chosen.img, rarity: r, cm, score: sc, medals: medal,
+                    perfect, isRecord, rushGain, isSmall: small, isSecret };
+    this.phase = "reveal";
+    this.prompt = "";
+    this.fx.setFightLook(false);
+    this.fx.setOrbit(0, 0, false);
+    this.fx.zoomTo(1);
+    this.fx.setSpeedLines(0);
+    this.fx.setAura(0);
+
+    this.haptics.play({ name: "catchResult", rarity: r });
+    if (r >= Rarity.ur) {
+      this.doFlash([255, 214, 10], 0.7, 0.3);
+      this.snd.play("fanfare_big");
+      this.snd.play("thunder");
+      this.snd.play("shine");
+      this.showBanner(r === Rarity.lr ? "超弩級当たり!!!!" : "大当たり!!!", `+${sc}pt`, r === Rarity.lr ? "rainbow" : "gold", 2.4);
+      this.fx.coinRain(Math.min(60, medal));
+      this.fx.lightPillar(r === Rarity.lr ? [255, 128, 230] : [255, 230, 77]);
+      this.fx.lightningFX();
+      this.fx.confettiRain(48);
+      this.fx.starShower(40);
+    } else if (r >= Rarity.sr) {
+      this.doFlash([255, 255, 255], 0.5, 0.2);
+      this.snd.play("fanfare");
+      this.snd.play("shine");
+      this.showBanner("当たり!", `+${sc}pt`, "hot", 1.8);
+      this.fx.coinRain(Math.min(30, medal));
+      this.fx.lightPillar([153, 230, 255]);
+      this.fx.starShower(18);
+    } else {
+      this.snd.play("deny");
+      this.snd.play("coin");
+      this.showBanner("…小物だった", `+${sc}pt`, "miss", 1.6);
+      this.fx.coinRain(Math.min(12, medal));
+    }
+    this.schedule(0.5, () => this.fx.splashFX(true));
+  }
+
+  dismissReveal() {
+    if (this.phase !== "reveal" || !this.reveal) return;
+    const rushGain = this.reveal.rushGain;
+    this.reveal = null;
+    if (rushGain > 0) {
+      const wasActive = this.rushActive;
+      if (!wasActive) {
+        this.rushCasts = 0;
+        this.rushStartScore = this.score;
+      }
+      this.rushActive = true;
+      this.rushLeft += rushGain;
+      this.fx.setRushLook(true);
+      this.snd.bgm("rush");
+      this.snd.play("rush_in");
+      this.haptics.play({ name: "rushIn", continued: wasActive });
+      this.snd.play("shine");
+      this.fx.lightPillar([255, 217, 77]);
+      this.fx.starShower(24);
+      this.fx.setSpeedLines(3);
+      this.schedule(1.9, () => this.fx.setSpeedLines(0));
+      this.showBanner(wasActive ? "RUSH継続!!" : "RUSH突入!!!", `高確率 ${this.rushLeft}回転`, "rush", 2.2);
+      this.schedule(2.2, () => this.toIdle());
+    } else {
+      this.toIdle();
+    }
+  }
+
+  escape(reason = "", report = null) {
+    this.oldManCue = null;
+    this.phase = "escaping";
+    this.prompt = "";
+    this.mashTapsLeft = null;
+    this.tension = 0;
+    this.combo = 0;
+    this.snd.play("escape");
+    this.snd.play("break");
+    this.haptics.play(report === null ? { name: "shortMiss" } : { name: "lineSnap", nearMiss: report.isNearMiss });
+    this.fx.setFightLook(false);
+    this.fx.setOrbit(0, 0, false);
+    this.fx.zoomTo(1);
+    this.fx.setSpeedLines(0);
+    this.fx.setAura(0);
+    this.fx.lineSnap();
+    this.doFlash([0, 0, 0], 0.35, 0.3);
+    if (!report) {
+      this.showBanner(reason, "", "miss", 1.2);
+      this.schedule(1.3, () => this.toIdle());
+      return;
+    }
+    this.banner = null;
+    this.escapeReport = report;
+    this.escapeShownAt = this.now;
+    if (report.isNearMiss || report.isBigFish) {
+      this.fx.shake(report.isNearMiss ? 6 : 4);
+    }
+    this.schedule(ESCAPE.displayDuration, () => {
+      if (this.escapeReport?.id === report.id) this.dismissEscape(true);
+    });
+  }
+
+  dismissEscape(force = false) {
+    if (this.phase !== "escaping" || !this.escapeReport) return;
+    if (!force && this.now - this.escapeShownAt < ESCAPE.skipLockDuration) return;
+    this.escapeReport = null;
+    this.toIdle();
+  }
+
+  toIdle() {
+    if (this.rushActive && this.rushLeft <= 0) {
+      this.endRush();
+      return;
+    }
+    this.phase = "idle";
+    this.landed = false;
+    this.prompt = this.autoCast ? `AUTO: 強さ${Math.round(this.autoPower * 100)}%で連投中` : "CASTボタン長押しでキャスト";
+    this.promptHot = false;
+    this.fx.resetScene();
+    this.fx.zoomTo(1);
+    this.scheduleAmbient();
+    if (this.autoCast) this.schedule(1.0, () => this.autoFire());
+    if (!this.rushActive) this.snd.bgm("idle");
+  }
+
+  endRush() {
+    this.phase = "rushEnding";
+    this.rushActive = false;
+    this.rushLeft = 0;
+    const summary = { id: Math.random().toString(36).slice(2), casts: this.rushCasts, score: this.score - this.rushStartScore };
+    this.rushSummary = summary;
+    this.prompt = "";
+    this.promptHot = false;
+    this.banner = null;
+    this.oldManCue = null;
+    this.landed = false;
+    this.fx.resetScene();
+    this.fx.setRushLook(false);
+    this.fx.zoomTo(1);
+    this.snd.stopBGM();
+    this.snd.play("rush_out");
+    this.schedule(RushRules.endingDuration, () => {
+      if (this.rushSummary?.id === summary.id) this.dismissRushSummary();
+    });
+  }
+
+  dismissRushSummary() {
+    if (this.phase !== "rushEnding") return;
+    this.rushSummary = null;
+    this.toIdle();
+  }
+}
+
+export { cardFXSpec, RARITY_LABEL, RARITY_COLOR, UPGRADES, UPGRADE_COSTS, dex as fishDex };
