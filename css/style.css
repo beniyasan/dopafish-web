@@ -344,9 +344,8 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
 .shop-note { font-size: 11px; font-weight: 800; color: rgba(255,255,255,.4); text-align: center; margin-top: 4px; }
 
 /* ---------- title ---------- */
-#title { position: absolute; inset: 0; background: rgba(0,0,0,.55); display: none;
+#title { position: absolute; inset: 0; background: rgba(0,0,0,.55); display: flex;
   align-items: center; justify-content: center; z-index: 40; }
-#title.show { display: flex; }
 .title-inner { text-align: center; display: flex; flex-direction: column; gap: 18px; }
 .title-main { font-size: 54px; font-weight: 900;
   background: linear-gradient(#ffd60a,#ff9500); -webkit-background-clip: text; background-clip: text;
