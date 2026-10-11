@@ -197,14 +197,17 @@ export class GameScene {
       else if (rd.swingT < ROD.swingTime + 0.35) { target = ROD.rest + 0.25; k = 120; c = 16; }
       else rd.swingT = -1;
     }
-    const prevVel = rd.vel;
-    rd.vel += (k * (target - rd.ang) - c * rd.vel) * dt;
-    rd.ang += rd.vel * dt;
-    // ブランクのしなり: 角加速度に引っ張られて先端が遅れ、止まると跳ね返る
-    const angAcc = (rd.vel - prevVel) / Math.max(dt, 1e-3);
-    rd.bendVel += (-220 * (rd.bend - bendBias) - 9 * rd.bendVel - 0.0016 * angAcc * 60) * dt;
-    rd.bend += rd.bendVel * dt;
-    rd.bend = Math.max(-0.45, Math.min(0.6, rd.bend));
+    // 振り抜きのバネは硬いので、フレームが重くても発散しないよう 1/240 秒以下に刻んで積分する
+    const steps = Math.max(1, Math.ceil(dt * 240)), h = dt / steps;
+    for (let i = 0; i < steps; i++) {
+      const angAcc = k * (target - rd.ang) - c * rd.vel;
+      rd.vel += angAcc * h;
+      rd.ang += rd.vel * h;
+      // ブランクのしなり: 角加速度に引っ張られて先端が遅れ、止まると跳ね返る
+      rd.bendVel += (-220 * (rd.bend - bendBias) - 9 * rd.bendVel - 0.0016 * angAcc * 60) * h;
+      rd.bend += rd.bendVel * h;
+      rd.bend = Math.max(-0.45, Math.min(0.6, rd.bend));
+    }
     // リール: 連打・リズム成功で回し、長押し中は回し続ける
     const taps = (logic?.mashCount ?? 0) + Math.round((logic?.rhythmScore ?? 0) * 10);
     if (taps !== rd.lastMash) {
