@@ -1,6 +1,6 @@
 // DOM UI — SwiftUI ContentView equivalent. All copy/layout ported 1:1.
 import { Rarity, RARITY_LABEL, RARITY_COLOR, fishPool, secretFishPool,
-         OLDMAN_HEAT, UPGRADES, UPGRADE_COSTS, cardFXSpec } from "./data.js";
+         OLDMAN_HEAT, UPGRADES, UPGRADE_COSTS, BAIT, BAIT_SHOP, cardFXSpec } from "./data.js";
 import { dex } from "./model.js";
 
 const ASSET = (name) => `assets/${name}.webp`;
@@ -67,7 +67,8 @@ export class UI {
           <button id="btn-auto" class="pill">AUTO<span class="sub">OFF</span></button>
           <button id="btn-shop" class="pill dim">釣具<span class="sub">強化</span></button>
         </div>
-        <div id="cast-side-l"><button id="btn-dex" class="pill dim">図鑑<span class="sub" id="dex-count">0/0</span></button></div>
+        <div id="cast-side-l"><button id="btn-dex" class="pill dim">図鑑<span class="sub" id="dex-count">0/0</span></button>
+          <div id="bait-tag" class="hidden"></div></div>
       </div>
 
       <div id="hook-cue" class="hidden"></div>
@@ -251,6 +252,17 @@ export class UI {
           ${cost === null ? "MAX" : `🪙${cost}`}</button>
       </div>`;
     }).join("");
+    const baitRows = BAIT_SHOP.map((b, i) => {
+      const canBuy = m.medals >= b.cost;
+      return `<div class="shop-row" data-bait="${i}">
+        <div class="shop-icon"><img class="bait-img" src="${ASSET(b.img)}" alt=""></div>
+        <div class="shop-info">
+          <div class="shop-name">${b.name}</div>
+          <div class="shop-eff">${BAIT[b.grade].effect}${m.bait ? ` ・ 今の餌(${m.bait.name})と交換` : ""}</div>
+        </div>
+        <button class="buy ${canBuy ? "can" : ""}" ${canBuy ? "" : "disabled"}>🪙${b.cost}</button>
+      </div>`;
+    }).join("");
     o.innerHTML = `
       <div class="overlay-bg" data-close></div>
       <div class="overlay-panel shop-panel">
@@ -261,10 +273,18 @@ export class UI {
         <div class="shop-medals">🪙 ${m.medals}</div>
         ${rows}
         <div class="shop-note">強化はずっと続く。釣って稼いで強くしよう</div>
+        <div class="shop-sec">🐟 活き餌 <small>次の1投だけ大物率UP・1つまで</small></div>
+        ${baitRows}
       </div>`;
     o.classList.remove("hidden"); o.classList.add("show");
     o.querySelectorAll("[data-close]").forEach((n) =>
       n.addEventListener("pointerdown", () => o.classList.remove("show")));
+    o.querySelectorAll("[data-bait]").forEach((row) => {
+      row.querySelector(".buy")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (m.buyBait(+row.dataset.bait)) this.showShop();
+      });
+    });
     o.querySelectorAll("[data-buy]").forEach((row) => {
       row.querySelector(".buy")?.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -301,6 +321,15 @@ export class UI {
       const b = $("btn-auto");
       b.className = `pill ${m.autoCast ? "on" : "dim"}`;
       b.innerHTML = `AUTO<span class="sub">${m.autoCast ? `強さ${c.autoPower}%` : "OFF"}</span>`;
+    }
+
+    // 活き餌
+    const baitKey = m.bait ? `${m.bait.name}:${m.rushActive}` : null;
+    if (c.bait !== baitKey) {
+      c.bait = baitKey;
+      const t = $("bait-tag");
+      t.className = m.bait ? "pill on" : "hidden";
+      if (m.bait) t.innerHTML = `🐟餌<span class="sub">${m.rushActive ? "RUSH後" : "次の1投"}</span>`;
     }
 
     // rush HUD
@@ -548,11 +577,22 @@ export class UI {
           <div class="fish-cm">${r.cm} cm</div>
           ${r.isRecord ? '<div class="new-record">✨ NEW RECORD! ✨</div>' : ""}
           ${r.perfect ? '<div class="perfect-note">PERFECT BONUS ×1.5</div>' : ""}
-          <div class="fish-pt">+${r.score} pt   🪙+${r.medals}</div>
+          ${r.baitable ? `
+          <div class="bait-choice">
+            <button class="bc cash" data-choice="cash">💰 換金<span>+${r.score}pt 🪙+${r.medals}</span></button>
+            <button class="bc bait" data-choice="bait">🎣 餌にする<span>${BAIT[r.rarity].effect}</span></button>
+          </div>
+          <div class="tap-note">${this.model.bait ? `※餌にすると今の${this.model.bait.name}と交換` : "カードをタップでも換金"}</div>`
+          : `<div class="fish-pt">+${r.score} pt   🪙+${r.medals}</div>
           ${r.rushGain > 0 ? `<div class="rush-gain">RUSH +${r.rushGain} 回転!!</div>` : ""}
-          <div class="tap-note">タップで続く</div>
+          <div class="tap-note">タップで続く</div>`}
         </div>
       </div>`;
+    o.querySelectorAll("[data-choice]").forEach((btn) =>
+      btn.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        this.model.dismissReveal(btn.dataset.choice);
+      }));
   }
 
   _cardFX(spec) {

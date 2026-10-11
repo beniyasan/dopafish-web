@@ -58,10 +58,22 @@ export const UPGRADES = [
 ];
 export const UPGRADE_COSTS = [300, 600, 1100, 1700, 2500]; // Lv1..5
 
+// 泳がせ釣りの活き餌 — 次の1投(RUSH中は温存)の抽選値を r' = 1-(1-r)(1-power) で底上げ
+// grade は餌にした魚のレア度(N/R)
+export const BAIT = [
+  { grade: Rarity.n, power: 0.35, effect: "大物率UP・小" },
+  { grade: Rarity.r, power: 0.55, effect: "大物率UP・大" },
+];
+export const BAIT_SHOP = [
+  { grade: Rarity.n, name: "小魚の活き餌", img: "FishMedaka", cost: 40 },
+  { grade: Rarity.r, name: "活きアジ",     img: "FishAji",    cost: 90 },
+];
+
 // MARK: RushRules — RUSH 確率・回転ルール (RushStatus.swift)
 export const RushRules = {
   missThreshold: 0.18,
-  bonusThreshold: 0.66,
+  bonusThreshold: 0.66,   // RUSH中の SR/SSR 境界
+  extendThreshold: 0.82,  // RUSH中の UR 以上(上乗せ対象)
   warningSpins: 3,
   endingDuration: 2.4,
   rodBiasPerLevel: 0.08,
@@ -72,19 +84,20 @@ export const RushRules = {
   reelBoost(roll, reelLevel) { return 1 - (1 - roll) * (1 - this.reelBiasPerLevel * reelLevel); },
   reelRescueProbability(reelLevel) { return this.reelRescuePerLevel * reelLevel; },
   rarityCap(rareLevel) { return [Rarity.sr, Rarity.ssr, Rarity.ur, Rarity.lr, Rarity.lr, Rarity.lr][Math.min(rareLevel, 5)]; },
+  // 突入: UR 10 / LR 15 (+RUSH券Lv)。RUSH中の上乗せは UR +3 / LR +5 のみ。
+  // 上乗せの期待値を1回転未満に抑えないとRUSHが終わらなくなる(以前は竿Lv2以上でほぼ無限)
   gain(rarity, active, rushLevel) {
-    let spins = rarity === Rarity.lr ? 15 : rarity === Rarity.ur ? 10 : 0;
-    if (active && rarity >= Rarity.ssr) spins += 2;
+    if (active) return rarity === Rarity.lr ? 5 : rarity === Rarity.ur ? 3 : 0;
+    const spins = rarity === Rarity.lr ? 15 : rarity === Rarity.ur ? 10 : 0;
     return spins > 0 ? spins + rushLevel : 0;
   },
+  // RUSH中は竿の大物補正をかけない(model.rollResult)ので、素の UR 以上率 + リール救済分
   bonusProbability(rareLevel, reelLevel) {
-    if (this.rarityCap(rareLevel) < Rarity.ssr) return 0;
-    const rareScale = 1 - this.rodBiasPerLevel * rareLevel;
-    const direct = Math.min(1, (1 - this.bonusThreshold) / rareScale);
-    const miss = Math.max(0, (this.missThreshold - (1 - rareScale)) / rareScale);
-    const rescuedBonus = Math.min(1, (1 - this.bonusThreshold)
+    if (this.rarityCap(rareLevel) < Rarity.ur) return 0;
+    const direct = 1 - this.extendThreshold;
+    const rescuedBonus = Math.min(1, (1 - this.extendThreshold)
       / ((1 - this.missThreshold) * (1 - this.reelBiasPerLevel * reelLevel)));
-    return Math.min(1, direct + miss * this.reelRescueProbability(reelLevel) * rescuedBonus);
+    return Math.min(1, direct + this.missThreshold * this.reelRescueProbability(reelLevel) * rescuedBonus);
   },
 };
 
@@ -95,7 +108,7 @@ export function rushStatus(remaining) {
     remaining, isLast, isUrgent,
     heading: isLast ? "LAST CAST" : "RUSH",
     hint: isLast ? "最終回転・この一投で上乗せを狙え"
-         : isUrgent ? "ラストスパート・SSR以上で上乗せ" : "高確率モード・スコア ×2",
+         : isUrgent ? "ラストスパート・UR以上で上乗せ" : "高確率モード・スコア ×2",
   };
 }
 

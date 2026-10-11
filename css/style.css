@@ -494,3 +494,19 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
 #hook-pop.early { color: #aaa; text-shadow: 0 0 6px rgba(0,0,0,.6); font-size: 28px; }
 @keyframes hookPop { 0% { transform: scale(1.8); opacity: 0 } 15% { transform: scale(1); opacity: 1 }
   70% { opacity: 1 } 100% { transform: translateY(-24px); opacity: 0 } }
+
+/* ---------- 活き餌 ---------- */
+.bait-choice { display: flex; gap: 10px; margin: 8px 0 2px; }
+.bc { flex: 1; padding: 10px 6px; border-radius: 14px; font-size: 17px; font-weight: 900; color: #fff;
+  display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.bc span { font-size: 11px; font-weight: 800; opacity: .9; }
+.bc.cash { background: linear-gradient(#ffd60a, #ff9500); color: #1a1a1a; }
+.bc.bait { background: linear-gradient(#00d5ff, #007aff); box-shadow: 0 0 12px rgba(0,213,255,.6);
+  animation: baitGlow 1s ease-in-out infinite alternate; }
+@keyframes baitGlow { from { box-shadow: 0 0 6px rgba(0,213,255,.4) } to { box-shadow: 0 0 18px rgba(0,213,255,.9) } }
+#bait-tag { pointer-events: none; }
+#bait-tag.hidden { display: none; }
+#bait-tag.on { background: #00d5ff; color: #00243a; }
+.shop-sec { font-size: 15px; font-weight: 900; color: #00d5ff; margin: 14px 0 6px; }
+.shop-sec small { font-size: 10px; color: rgba(255,255,255,.5); margin-left: 4px; }
+.bait-img { width: 40px; height: 28px; object-fit: cover; border-radius: 6px; }
