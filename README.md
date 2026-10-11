@@ -40,3 +40,5 @@ iOSアプリ「Dopagaki Fishing Collection」([beniyasan/dopafish](https://githu
 | `?mashneed=0.2` | 連打必要量を20%に(逃げ検証用) |
 | `?rush=N` | RUSH N回転の状態で開始 |
 | `?ending` | 開始時に通常EDを再生 |
+| `?daycast=N` | その日の投数をNにして開始(29で次の1投で1日終了) |
+| `?omen=N` | 海の気配ゲージをNで開始(100で満タン) |

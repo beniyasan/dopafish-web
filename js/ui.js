@@ -1,6 +1,7 @@
 // DOM UI — SwiftUI ContentView equivalent. All copy/layout ported 1:1.
 import { Rarity, RARITY_LABEL, RARITY_COLOR, fishPool, secretFishPool,
-         OLDMAN_HEAT, UPGRADES, UPGRADE_COSTS, BAIT, BAIT_SHOP, cardFXSpec } from "./data.js";
+         OLDMAN_HEAT, UPGRADES, UPGRADE_COSTS, BAIT, BAIT_SHOP, cardFXSpec,
+         HOLD_COLORS, OMEN, DAY, WEATHER, SECRET_COND } from "./data.js";
 import { dex } from "./model.js";
 
 const ASSET = (name) => `assets/${name}.webp`;
@@ -27,10 +28,13 @@ export class UI {
     this._c = {}; // change cache
 
     root.insertAdjacentHTML("beforeend", `
+      <div id="tod-tint"></div>
+      <div id="fog-layer" class="hidden"></div>
       <div id="vignette" class="hidden"></div>
       <div id="vignette-hot" class="hidden"></div>
       <div id="flash"></div>
 
+      <div id="hold-row" class="hidden"><span class="hold-label">保留</span><div id="hold-icons"></div></div>
       <div id="hud">
         <div class="hud-left">
           <div class="hud-label">SCORE</div>
@@ -43,6 +47,10 @@ export class UI {
           <div id="hud-maxcm"></div>
         </div>
         <div class="hud-center">
+          <div id="day-hud">
+            <div id="day-line"></div>
+            <div class="omen"><span>海の気配</span><div class="omen-bar"><div id="omen-fill"></div></div></div>
+          </div>
           <div id="hud-auto" class="hidden"></div>
           <div id="rush-hud" class="hidden"></div>
         </div>
@@ -109,6 +117,7 @@ export class UI {
       <div id="escape-card" class="hidden"></div>
       <div id="rush-end" class="hidden"></div>
       <div id="ending" class="hidden"></div>
+      <div id="day-end" class="hidden"></div>
       <div id="dex-overlay" class="hidden"></div>
       <div id="shop-overlay" class="hidden"></div>
       <div id="title" class="hidden">
@@ -163,6 +172,13 @@ export class UI {
     this.$("escape-card").addEventListener("pointerdown", () => m.dismissEscape());
     this.$("rush-end").addEventListener("pointerdown", () => m.dismissRushSummary());
     this.$("ending").addEventListener("pointerdown", () => m.dismissEnding());
+    this.$("day-end").addEventListener("pointerdown", (e) => {
+      const b = e.target.closest("[data-day]");
+      if (!b) return;
+      e.stopPropagation();
+      if (b.dataset.day === "copy") this._copyDayResult(b);
+      else m.startNewDay(b.dataset.day);
+    });
 
     // any other tap on the stage → model.tapScreen + mash ripple
     document.getElementById("app").addEventListener("pointerdown", (e) => {
@@ -170,7 +186,7 @@ export class UI {
           e.target.closest("#dex-overlay") || e.target.closest("#shop-overlay") ||
           e.target.closest("#title") || e.target.closest("#reveal") ||
           e.target.closest("#escape-card") || e.target.closest("#rush-end") ||
-          e.target.closest("#ending")) return;
+          e.target.closest("#ending") || e.target.closest("#day-end")) return;
       const r = document.getElementById("app").getBoundingClientRect();
       const x = (e.clientX - r.left) * 390 / r.width;
       const y = (e.clientY - r.top) * 844 / r.height;
@@ -209,7 +225,7 @@ export class UI {
       rows += `<div class="dex-secret-note">まだ見ぬ魚がいるという噂がある…</div>`;
     } else {
       // ED後は黒塗りの枠で存在だけ見せる
-      for (const f of secretFishPool) rows += this._dexRow(f, 5, true);
+      for (const f of secretFishPool) rows += this._dexRow(f, 5, true, SECRET_COND[f.name]?.hint);
       if (dex.caughtSecrets < secretFishPool.length) {
         rows += `<div class="dex-secret-note">金の竿を極めし者の前にのみ現れる…</div>`;
       }
@@ -239,7 +255,7 @@ export class UI {
     });
   }
 
-  _dexRow(f, r, secret) {
+  _dexRow(f, r, secret, hint) {
     const e = dex.entry(f.name);
     const caught = e.count > 0;
     return `<div class="dex-row ${caught ? "caught" : ""}" style="${caught ? `border:1px solid ${RARITY_COLOR[r]}73` : ""}">
@@ -247,7 +263,7 @@ export class UI {
         : secret ? `<img class="sil" src="${ASSET(f.img)}" alt="">` : "?"}</div>
       <div class="dex-info">
         <div class="dex-name">${caught ? f.name : "？？？"}${secret ? '<span class="secret-badge">幻</span>' : ""}</div>
-        <div class="dex-cm">${caught ? `最大 ${e.maxCm}cm` : "未捕獲"}</div>
+        <div class="dex-cm">${caught ? `最大 ${e.maxCm}cm` : hint ? `未捕獲・${hint}` : "未捕獲"}</div>
       </div>
       ${caught ? `<div class="dex-count">×${e.count}</div>` : ""}
     </div>`;
@@ -339,6 +355,42 @@ export class UI {
       const b = $("btn-auto");
       b.className = `pill ${m.autoCast ? "on" : "dim"}`;
       b.innerHTML = `AUTO<span class="sub">${m.autoCast ? `強さ${c.autoPower}%` : "OFF"}</span>`;
+    }
+
+    // 1日・時間帯・天気
+    const w = WEATHER[m.weatherKey] ?? WEATHER.clear;
+    const dayKey = `${m.day.mode}:${m.day.cast}:${m.slotIdx}:${m.weatherKey}`;
+    if (c.dayKey !== dayKey) {
+      c.dayKey = dayKey;
+      $("day-line").innerHTML = `${m.day.mode === "daily" ? '<b class="daily">DAILY</b> ' : ""}${w.icon} ${m.slot.name}`
+        + ` <span class="day-cast">${Math.min(m.day.cast, DAY.casts)}/${DAY.casts}投</span>`;
+      $("tod-tint").className = m.slot.key;
+      $("fog-layer").classList.toggle("hidden", m.weatherKey !== "fog");
+    }
+    if (c.omen !== m.omen) {
+      c.omen = m.omen;
+      $("omen-fill").style.width = `${100 * m.omen / OMEN.max}%`;
+      $("omen-fill").classList.toggle("hot", m.omen >= OMEN.max * 0.75);
+    }
+    // 保留
+    const showHolds = ["idle", "charging", "flying", "waiting"].includes(m.phase);
+    const holdKey = showHolds ? m.holds.map((h) => `${h.seq}:${h.color}`).join(",") : "";
+    if (c.holdKey !== holdKey) {
+      c.holdKey = holdKey;
+      $("hold-row").classList.toggle("hidden", !showHolds);
+      $("hold-icons").innerHTML = m.holds.map((h, i) =>
+        `<i class="hb ${HOLD_COLORS[h.color]} ${i === 0 ? "next" : ""}" data-seq="${h.seq}"></i>`).join("");
+    }
+    if (c.holdChange !== m.holdChange?.id) {
+      c.holdChange = m.holdChange?.id;
+      const el = m.holdChange && $("hold-icons").querySelector(`[data-seq="${m.holdChange.seq}"]`);
+      if (el) { el.classList.remove("changed"); void el.offsetWidth; el.classList.add("changed"); }
+    }
+
+    // 1日のリザルト
+    if (c.dayRes !== m.dayResult?.id) {
+      c.dayRes = m.dayResult?.id;
+      this._renderDayEnd(m.dayResult);
     }
 
     // 活き餌
@@ -676,6 +728,54 @@ export class UI {
     return `${rays}${sparkles}${rings}
       ${spec.entryFlash ? '<div class="entry-flash"></div>' : ""}
       ${spec.entryShine ? `<div class="shine" style="animation-duration:${spec.shinePeriod || 0.001}s"></div>` : ""}`;
+  }
+
+  // ---------- 1日のリザルト ----------
+
+  _renderDayEnd(d) {
+    const o = this.$("day-end");
+    if (!d) { o.className = "hidden"; o.innerHTML = ""; return; }
+    const st = d.stats;
+    const counts = RARITY_LABEL.map((l, r) =>
+      `<span class="de-r" style="color:${RARITY_COLOR[r]}">${l}<b>${st.byR[r]}</b></span>`).join("")
+      + (st.secrets ? `<span class="de-r secret">幻<b>${st.secrets}</b></span>` : "");
+    const best = st.best
+      ? `<div class="de-best"><img src="${ASSET(st.best.img)}" alt=""><div><small>今日の一匹</small><br>${st.best.name}<br><b>${st.best.cm}cm</b></div></div>`
+      : `<div class="de-best none">今日は大物に出会えなかった…</div>`;
+    const today = new Date();
+    o.className = "show";
+    o.innerHTML = `
+      <div class="de-card rank-${d.rank}">
+        <div class="de-title">${d.mode === "daily" ? `デイリーチャレンジ ${d.date}` : "1日の釣果"}</div>
+        <div class="de-rank">${d.rank}</div>
+        <div class="de-score">${d.score.toLocaleString()} pt</div>
+        <div class="de-sub">${d.isBest ? "🏆 自己ベスト更新!!" : `ベスト ${d.best.toLocaleString()} pt`}
+          ${d.dailyBest !== null ? ` ・ 今日のデイリー最高 ${d.dailyBest.toLocaleString()} pt` : ""}</div>
+        <div class="de-counts">${counts}</div>
+        <div class="de-misc">バラし・ハズレ ${st.miss}回 ・ 図鑑新登録 ${st.newCount}種</div>
+        ${best}
+        <div class="de-btns">
+          <button class="de-btn next" data-day="free">次の日へ</button>
+          <button class="de-btn daily" data-day="daily">デイリー<br><small>${today.getMonth() + 1}/${today.getDate()} の海</small></button>
+        </div>
+        <button class="de-copy" data-day="copy">📋 結果をコピー</button>
+      </div>`;
+  }
+
+  _dayShareText(d) {
+    const st = d.stats;
+    const fish = RARITY_LABEL.map((l, r) => st.byR[r] ? `${l}×${st.byR[r]}` : "").filter(Boolean).join(" ");
+    return `🎣 DOPAGAKI ${d.mode === "daily" ? `デイリー ${d.date}` : "1日の釣果"}\n`
+      + `ランク${d.rank} ${d.score.toLocaleString()}pt\n${fish}${st.secrets ? ` 幻×${st.secrets}` : ""}\n`
+      + (st.best ? `今日の一匹: ${st.best.name} ${st.best.cm}cm` : "");
+  }
+
+  _copyDayResult(btn) {
+    const text = this._dayShareText(this.model.dayResult);
+    const done = () => { btn.textContent = "✅ コピーしました"; };
+    try {
+      navigator.clipboard.writeText(text).then(done, () => { window.prompt("コピーしてね", text); });
+    } catch { window.prompt("コピーしてね", text); }
   }
 
   // ---------- 通常ED ----------

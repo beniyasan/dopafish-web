@@ -356,8 +356,17 @@ export class GameScene {
     this.teasers.push(node);
   }
 
-  teaserRain(on) { this.rainRate = on ? 160 : 0; this.rainTarget = on ? 0.25 : 0; }
-  teaserCloud(on) { this.cloudTarget = on ? 0.3 : 0; }
+  // 予告の雨・雲は、天気(常時)と重ねる。予告が終わっても天気の分は残す
+  teaserRain(on) {
+    const r = on || this.weather === "rain";
+    this.rainRate = r ? (on ? 160 : 110) : 0; this.rainTarget = r ? 0.25 : 0;
+  }
+  teaserCloud(on) { this.cloudTarget = on ? 0.3 : this.weather === "fog" ? 0.22 : this.weather === "rain" ? 0.12 : 0; }
+  setWeather(kind) {
+    this.weather = kind;
+    this.teaserRain(false);
+    this.teaserCloud(false);
+  }
 
   teaserBoat() {
     const fromLeft = Math.random() < 0.5;
