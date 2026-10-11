@@ -27,7 +27,12 @@ export const dex = {
   get caughtSpecies() { return Object.keys(this.records).length; },
   get totalSpecies() { return fishPool.reduce((a, s) => a + s.length, 0); },
   get caughtSecrets() { return secretFishPool.filter(f => this.entry(f.name).count > 0).length; },
+  // シークレット以外を全種捕獲済み
+  get isComplete() { return fishPool.every(s => s.every(f => this.entry(f.name).count > 0)); },
 };
+
+// 通常ED タイムライン(秒) — ui/css と揃える
+export const ENDING = { skipLock: 2.0, teaserAt: 13.5, closeLock: 1.5 };
 
 export class GameModel {
   constructor(fx, snd, haptics) {
@@ -45,6 +50,9 @@ export class GameModel {
     this.promptHot = false;
     this.flash = null;              // {color:[r,g,b], opacity}
     this.reveal = null;             // Caught
+    this.ending = null;             // {id, start, teaserAt, replay}
+    this.endingSeen = store.getInt("endingSeen") > 0;
+    this.pendingRushGain = 0;
     this.revealLockUntil = 0;
     this.chargePower = 0;
     this.tension = 0;
@@ -82,13 +90,14 @@ export class GameModel {
     this.escapeShownAt = 0;
     this.ambientArmed = false;
 
-    // debug: URL params ?rig=ur ?fast ?go ?win ?secret ?mashneed=0.2 ?rush=10
+    // debug: URL params ?rig=ur ?fast ?go ?win ?secret ?mashneed=0.2 ?rush=10 ?ending
     const q = new URLSearchParams(location.search);
     this.rig = q.get("rig");
     this.fast = q.has("fast");
     this.autoStart = q.has("go");
     this.autoWin = q.has("win");
     this.forceSecret = q.has("secret");
+    this.forceEnding = q.has("ending");
     this.mashMult = parseFloat(q.get("mashneed") || "1") || 1;
     this.debugRush = parseInt(q.get("rush") || "", 10) || null;
   }
@@ -136,6 +145,14 @@ export class GameModel {
         if (this.autoWin) this.onMashTap();
         if (this.mashRemain <= 0) this.resolveMash();
         break;
+      case "ending":
+        if (this.ending && !this.ending.teaserPlayed && this.now >= this.ending.teaserAt) {
+          this.ending.teaserPlayed = true;
+          this.snd.play("impact");
+          this.snd.play("shine");
+          this.haptics.play({ name: "bite" });
+        }
+        break;
     }
   }
 
@@ -170,6 +187,11 @@ export class GameModel {
     this.fx.resetScene();
     this.fx.setRushLook(this.rushActive);
     this.scheduleAmbient();
+    // コンプ済みでED未視聴(既存セーブ含む)なら起動時に一度だけ流す
+    if (this.forceEnding || (dex.isComplete && !this.endingSeen)) {
+      this.startEnding(this.endingSeen);
+      return;
+    }
     if (this.autoStart) this.schedule(0.3, () => this.performCast(0.8));
   }
 
@@ -553,6 +575,7 @@ export class GameModel {
       case "title": this.startGame(); break;
       case "rushEnding": this.dismissRushSummary(); break;
       case "escaping": this.dismissEscape(); break;
+      case "ending": this.dismissEnding(); break;
     }
   }
 
@@ -614,7 +637,9 @@ export class GameModel {
     const r = this.result ?? Rarity.n;
     let chosen = pick(fishPool[r]);
     let isSecret = false;
-    if (this.forceSecret || (this.rareLv >= UPGRADE_COSTS.length && Math.random() < 0.04)) {
+    // シークレットは図鑑コンプ + 金の竿MAX で解禁
+    const secretOpen = dex.isComplete && this.rareLv >= UPGRADE_COSTS.length;
+    if (this.forceSecret || (secretOpen && Math.random() < 0.04)) {
       chosen = pick(secretFishPool);
       isSecret = true;
     }
@@ -691,6 +716,16 @@ export class GameModel {
     if (this.now < this.revealLockUntil) return;
     const rushGain = this.reveal.rushGain;
     this.reveal = null;
+    // 最後の1種を釣ったらRUSHより先にEDを流す
+    if (dex.isComplete && !this.endingSeen) {
+      this.pendingRushGain = rushGain;
+      this.startEnding(false);
+      return;
+    }
+    this.applyRushGain(rushGain);
+  }
+
+  applyRushGain(rushGain) {
     if (rushGain > 0) {
       const wasActive = this.rushActive;
       if (!wasActive) {
@@ -713,6 +748,46 @@ export class GameModel {
     } else {
       this.toIdle();
     }
+  }
+
+  // ---- 通常ED ----
+  startEnding(replay) {
+    this.phase = "ending";
+    this.prompt = "";
+    this.promptHot = false;
+    this.banner = null;
+    this.oldManCue = null;
+    this.ending = { id: Math.random().toString(36).slice(2), start: this.now,
+                    teaserAt: this.now + ENDING.teaserAt, replay, teaserPlayed: false };
+    this.snd.stopBGM();
+    this.snd.play("fanfare_big");
+    this.snd.play("shine");
+    const id = this.ending.id;
+    this.schedule(2.5, () => { if (this.ending?.id === id) this.snd.bgm("idle"); });
+  }
+
+  // 図鑑の「ED再生」ボタン
+  replayEnding() {
+    if (this.phase !== "idle" || !dex.isComplete) return;
+    this.startEnding(true);
+  }
+
+  dismissEnding() {
+    const e = this.ending;
+    if (this.phase !== "ending" || !e) return;
+    if (this.now - e.start < ENDING.skipLock) return;
+    if (this.now < e.teaserAt) {
+      // スタッフロールを飛ばして黒塗りへ
+      this.ending = { ...e, teaserAt: this.now, skipped: true };
+      return;
+    }
+    if (this.now - e.teaserAt < ENDING.closeLock) return;
+    this.ending = null;
+    if (!this.endingSeen) { this.endingSeen = true; store.set("endingSeen", 1); }
+    const gain = this.pendingRushGain;
+    this.pendingRushGain = 0;
+    this.applyRushGain(gain);
+    if (this.rushActive && gain === 0) this.snd.bgm("rush"); // RUSH中のED再生から戻る
   }
 
   escape(reason = "", report = null) {
