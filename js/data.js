@@ -179,3 +179,66 @@ export const RHYTHM = {
 export function rand(a = 0, b = 1) { return a + Math.random() * (b - a); }
 export function randInt(a, b) { return Math.floor(a + Math.random() * (b - a + 1)); } // inclusive
 export function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// ===== 投げをまたいだ期待感 / 1日の区切り =====
+
+// 保留(先読み)の色 — 期待度の低い順
+export const HOLD_COLORS = ["white", "blue", "green", "red", "gold", "rainbow"];
+export const HOLD_SIZE = 3;
+// 結果(レア度, null=ハズレ)ごとの表示色の出やすさ [white, blue, green, red, gold, rainbow]
+export const HOLD_COLOR_TABLE = {
+  miss:        [85, 15, 0, 0, 0, 0],
+  [Rarity.n]:  [70, 30, 0, 0, 0, 0],
+  [Rarity.r]:  [40, 50, 10, 0, 0, 0],
+  [Rarity.sr]: [0, 40, 45, 15, 0, 0],
+  [Rarity.ssr]:[0, 0, 35, 50, 15, 0],
+  [Rarity.ur]: [0, 0, 0, 40, 50, 10],
+  [Rarity.lr]: [0, 0, 0, 0, 40, 60],
+};
+export const HOLD_CHANGE = { onShift: 0.4, onCast: 0.5 }; // 保留変化の確率(列が進むとき / 投げる瞬間)
+
+// 天井「海の気配」— 溜まると次の保留が大物(SSR以上)確定・虹色
+export const OMEN = { max: 100, miss: 12, escape: 10, [Rarity.n]: 8, [Rarity.r]: 6 };
+
+// 1日 = 30投(RUSH中の投げは数えない)。時間帯で大物率が変わる
+export const DAY = {
+  casts: 30,
+  slots: [
+    { key: "morning", name: "朝マヅメ", until: 8,  bias: 0.12 },
+    { key: "noon",    name: "昼",       until: 18, bias: 0 },
+    { key: "evening", name: "夕マヅメ", until: 26, bias: 0.2 },
+    { key: "night",   name: "夜",       until: 30, bias: 0.1 },
+  ],
+  ranks: [[40000, "S"], [20000, "A"], [8000, "B"], [0, "C"]],
+};
+// 天気は時間帯ごとに抽選
+export const WEATHER = {
+  clear: { name: "晴れ", icon: "☀️", bias: 0,    weight: 60 },
+  rain:  { name: "雨",   icon: "🌧", bias: 0.08, weight: 25 },
+  fog:   { name: "霧",   icon: "🌫", bias: 0.04, weight: 15 },
+};
+// シークレット魚の出現条件(図鑑コンプ + 金の竿MAX に加えて)
+export const SECRET_COND = {
+  "真夜中の星メダカ":       { slot: "night",   hint: "夜にだけ現れるらしい" },
+  "白銀の幻鮫":             { weather: "fog",  hint: "霧の日に現れるらしい" },
+  "古代龍リュウグウノツカイ": { weather: "rain", hint: "雨の日に現れるらしい" },
+};
+export const SECRET_CHANCE = 0.1; // 条件を満たしているときの抽選確率
+
+// デイリーチャレンジ用: 日付文字列 → 32bit シード → mulberry32
+export function seedFromString(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+export function mulberry32(a) {
+  return () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+export function todayKey(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}

@@ -2,6 +2,8 @@
 import { Rarity, RARITY_LABEL, RARITY_COLOR, fishPool, secretFishPool, OLD_MAN, OLDMAN_HEAT,
          UPGRADES, UPGRADE_COSTS, RushRules, rushStatus, ESCAPE, makeEscapeReport,
          cardFXSpec, MASH_NEED, BAIT, BAIT_SHOP, fightTypeFor, HOLD, RHYTHM,
+         HOLD_COLORS, HOLD_SIZE, HOLD_COLOR_TABLE, HOLD_CHANGE, OMEN, DAY, WEATHER,
+         SECRET_COND, SECRET_CHANCE, seedFromString, mulberry32, todayKey,
          rand, randInt, pick } from "./data.js";
 
 const LS = window.localStorage;
@@ -46,8 +48,17 @@ export class GameModel {
   constructor(fx, snd, haptics) {
     this.fx = fx; this.snd = snd; this.haptics = haptics;
 
-    this.phase = "title";           // title idle charging flying waiting reach mash reveal escaping rushEnding
-    this.score = 0;
+    this.phase = "title";           // title idle charging flying waiting reach mash reveal escaping rushEnding ending dayEnd
+    // 1日(30投)の進行。score はその日のスコア
+    this.day = this.loadDay();
+    this.score = this.day.score;
+    this.dayResult = null;
+    this.slotIdx = this.slotFor(this.day.cast + 1);
+    // 保留(先読み)と天井
+    this.holds = [];                // [{seq, r, rescue, rescueR, u, forced, color, target}]
+    this.currentHold = null;
+    this.holdChange = null;         // {id, seq} 保留変化の演出用
+    this.omen = store.getInt("omen");
     this.medals = store.getInt("medals");
     this.combo = 0;
     this.rushLeft = 0;
@@ -74,7 +85,8 @@ export class GameModel {
     this.autoCast = false;
     this.autoPower = 0.65;
     this.oldManCue = null;          // {id,line,heat}
-    this.bestScore = store.getInt("bestScore");
+    this.bestScore = store.getInt("bestDay"); // 1日のベスト(以前の bestScore は累計だったので引き継がない)
+    if (this.day.prevBest === undefined) this.day.prevBest = this.bestScore; // その日が始まった時点の記録
     this.bestCm = store.getInt("bestCm");
 
     // upgrades
@@ -115,7 +127,7 @@ export class GameModel {
     this.escapeShownAt = 0;
     this.ambientArmed = false;
 
-    // debug: URL params ?rig=ur ?fast ?go ?win ?secret ?mashneed=0.2 ?rush=10 ?ending
+    // debug: URL params ?rig=ur ?fast ?go ?win ?secret ?mashneed=0.2 ?rush=10 ?ending ?daycast=29 ?omen=90
     const q = new URLSearchParams(location.search);
     this.rig = q.get("rig");
     this.fast = q.has("fast");
@@ -123,6 +135,9 @@ export class GameModel {
     this.autoWin = q.has("win");
     this.forceSecret = q.has("secret");
     this.forceEnding = q.has("ending");
+    // ?daycast=29 その日の投数 / ?omen=90 海の気配
+    if (q.has("daycast")) { this.day.cast = Math.min(DAY.casts, parseInt(q.get("daycast"), 10) || 0); this.slotIdx = this.slotFor(this.day.cast + 1); }
+    if (q.has("omen")) this.omen = Math.min(OMEN.max - 1, parseInt(q.get("omen"), 10) || 0);
     this.mashMult = parseFloat(q.get("mashneed") || "1") || 1;
     this.debugRush = parseInt(q.get("rush") || "", 10) || null;
   }
@@ -230,6 +245,8 @@ export class GameModel {
       this.rushStartScore = this.score;
     }
     this.snd.bgm(this.rushActive ? "rush" : "idle");
+    this.fillHolds();
+    this.setSlot(this.slotFor(this.day.cast + 1));
     this.phase = "idle";
     this.prompt = "CASTボタン長押しでキャスト";
     this.fx.resetScene();
@@ -240,6 +257,8 @@ export class GameModel {
       this.startEnding(this.endingSeen);
       return;
     }
+    // 30投を終えた日のまま再読み込みしたら、追加で投げさせずにリザルトへ
+    if (this.day.cast >= DAY.casts && !this.rushActive) { this.endDay(); return; }
     if (this.autoStart) this.schedule(0.3, () => this.performCast(0.8));
   }
 
@@ -268,6 +287,16 @@ export class GameModel {
       this.setBait(null);
       this.showBanner(`${this.activeBait.name}を泳がせた!`, BAIT[this.activeBait.grade].effect, "hot", 1.4);
     }
+    this.currentHold = this.rig ? null : this.consumeHold();
+    // RUSH中の投げは1日の投数に数えない(時間が止まる)
+    if (!this.rushActive) {
+      this.day.cast += 1;
+      if (this.setSlot(this.slotFor(this.day.cast))) {
+        const w = WEATHER[this.weatherKey];
+        this.schedule(0.5, () => this.showBanner(this.slot.name, `${w.icon}${w.name}`, "info", 1.4));
+      }
+    }
+    this.saveDay();
     this.snd.play("cast");
     this.fx.castLure(power);
     let isLastCast = false;
@@ -334,12 +363,193 @@ export class GameModel {
       this.result = Object.prototype.hasOwnProperty.call(Rarity, this.rig) ? Rarity[this.rig] : null;
       return;
     }
-    let r = Math.random();
-    // RUSH中は竿補正なし(RUSH自体が高確率なので、重ねると上乗せが止まらなくなる)
-    if (!this.rushActive) r = RushRules.boost(r, this.rareLv);
-    r = this.applyBait(r);
-    this.result = this.rarityForRoll(r);
-    this.applyGearLimits();
+    const h = this.currentHold ?? this.makeHold(this.day.seq);
+    this.result = this.resolveHold(h, true);
+  }
+
+  // ---- 保留(先読み) ----
+  // 保留は乱数だけを先に引いておき、レア度は投げる時点の状態(RUSH・竿・餌・時間帯)で決める
+  holdRng(seq) {
+    return this.day.mode === "daily"
+      ? mulberry32((this.day.seed ^ Math.imul(seq + 1, 2654435761)) >>> 0)
+      : Math.random;
+  }
+
+  makeHold(seq) {
+    const g = this.holdRng(seq);
+    // u: 魚種 / cm: 大きさ / sec, secPick: シークレット抽選 — デイリーでは全部シード由来
+    const h = { seq, r: g(), rescue: g(), rescueR: g(), u: g(), c1: g(), c2: g(),
+                cm: g(), sec: g(), secPick: g(), forced: false };
+    this.colorHold(h);
+    return h;
+  }
+
+  // 表示色(color)と、保留変化で化ける先(target)を決める
+  colorHold(h) {
+    if (h.forced) { h.color = h.target = HOLD_COLORS.length - 1; return; }
+    const res = this.resolveHold(h, false);
+    const table = HOLD_COLOR_TABLE[res === null ? "miss" : res];
+    const roll = (u) => {
+      let x = u * table.reduce((a, b) => a + b, 0);
+      for (let i = 0; i < table.length; i++) { x -= table[i]; if (x < 0) return i; }
+      return table.length - 1;
+    };
+    h.color = roll(h.c1);
+    h.target = Math.max(h.color, roll(h.c2));
+  }
+
+  fillHolds() {
+    while (this.holds.length < HOLD_SIZE) {
+      const last = this.holds.at(-1);
+      this.holds.push(this.makeHold(last ? last.seq + 1 : this.day.seq));
+    }
+  }
+
+  get timeBias() {
+    const w = WEATHER[this.day.weather[this.slotIdx]] ?? WEATHER.clear;
+    return 1 - (1 - DAY.slots[this.slotIdx].bias) * (1 - w.bias);
+  }
+
+  resolveHold(h, useBait) {
+    let r = h.r;
+    // RUSH中は竿・時間帯の補正なし(RUSH自体が高確率なので、重ねると上乗せが止まらなくなる)
+    if (!this.rushActive) {
+      r = RushRules.boost(r, this.rareLv);
+      r = 1 - (1 - r) * (1 - this.timeBias);
+    }
+    if (useBait) r = this.applyBait(r);
+    let res = this.rarityForRoll(r);
+    const cap = RushRules.rarityCap(this.rareLv);
+    if (res !== null && res > cap) res = cap;
+    // リール救済は通常時のみ(RUSH中に効くと上乗せが止まらない)
+    if (res === null && !this.rushActive && h.rescue < RushRules.reelRescueProbability(this.reelLv)) {
+      const r2 = RushRules.reelBoost(this.missThreshold + h.rescueR * (1 - this.missThreshold), this.reelLv);
+      res = Math.min(this.rarityForRoll(r2) ?? Rarity.n, cap);
+    }
+    // 天井: 大物(SSR以上・竿の上限まで)確定
+    if (h.forced) res = Math.max(res ?? -1, Math.min(Rarity.ssr, cap));
+    return res;
+  }
+
+  // 投げるときに先頭の保留を使う。残りは列が進むときに保留変化することがある
+  consumeHold() {
+    this.fillHolds();
+    const h = this.holds.shift();
+    if (h.color < h.target && Math.random() < HOLD_CHANGE.onCast) this.changeHold(h, true);
+    for (const o of this.holds) {
+      if (o.color < o.target && Math.random() < HOLD_CHANGE.onShift) this.changeHold(o, false);
+    }
+    this.day.seq = h.seq + 1;
+    this.fillHolds();
+    return h;
+  }
+
+  changeHold(h, onCast) {
+    h.color = h.target;
+    this.holdChange = { id: Math.random().toString(36).slice(2), seq: h.seq, onCast };
+    this.snd.play("shine");
+    this.haptics.play({ name: "bite" });
+    const name = ["", "青", "緑", "赤", "金", "虹"][h.color];
+    if (h.color >= 3) this.showBanner(onCast ? `${name}保留に変化!!` : "保留変化!!", h.color >= 4 ? "激アツ!!" : "チャンス!", h.color >= 5 ? "rainbow" : h.color >= 4 ? "gold" : "hot", 1.4);
+  }
+
+  // 天井「海の気配」
+  addOmen(v) {
+    if (this.rushActive || v <= 0) return;
+    this.omen = Math.min(OMEN.max, this.omen + v);
+    if (this.omen >= OMEN.max) {
+      // 満タン: 一番後ろの保留を大物確定(虹)にする
+      this.fillHolds();
+      const h = this.holds.at(-1);
+      h.forced = true;
+      this.colorHold(h);
+      this.omen = 0;
+      this.holdChange = { id: Math.random().toString(36).slice(2), seq: h.seq, onCast: false };
+      this.schedule(0.3, () => {
+        this.snd.play("shine"); this.snd.play("perfect");
+        this.showBanner("海の気配がMAX!!", "虹保留 = 大物確定", "rainbow", 2.0);
+      });
+    }
+    store.set("omen", this.omen);
+  }
+  resetOmen() { this.omen = 0; store.set("omen", 0); }
+
+  // ---- 1日 ----
+  loadDay() {
+    const d = store.getJSON("day", null);
+    if (!d || d.v !== 1) return this.freshDay("free");
+    // 日付が変わったデイリーは続けない(シード・天気はその日のもの)
+    if (d.mode === "daily" && d.date !== todayKey()) return this.freshDay("free");
+    return d;
+  }
+
+  freshDay(mode) {
+    const date = todayKey();
+    const seed = mode === "daily" ? seedFromString(`dopagaki-${date}`) : (Math.random() * 2 ** 32) >>> 0;
+    const g = mulberry32(seed ^ 0x9e3779b9);
+    const keys = Object.keys(WEATHER), total = keys.reduce((a, k) => a + WEATHER[k].weight, 0);
+    const weather = DAY.slots.map(() => {
+      let x = g() * total;
+      for (const k of keys) { x -= WEATHER[k].weight; if (x < 0) return k; }
+      return "clear";
+    });
+    return { v: 1, mode, date, seed, cast: 0, seq: 0, score: 0, weather,
+             stats: { byR: [0, 0, 0, 0, 0, 0], miss: 0, best: null, newCount: 0, secrets: 0 } };
+  }
+
+  saveDay() { this.day.score = this.score; LS.setItem("day", JSON.stringify(this.day)); }
+
+  slotFor(castNo) {
+    const n = Math.max(1, Math.min(DAY.casts, castNo));
+    return DAY.slots.findIndex((sl) => n <= sl.until);
+  }
+  get slot() { return DAY.slots[this.slotIdx]; }
+  get weatherKey() { return this.day.weather[this.slotIdx] ?? "clear"; }
+
+  setSlot(idx) {
+    const changed = idx !== this.slotIdx;
+    this.slotIdx = idx;
+    this.fx.setWeather?.(this.weatherKey);
+    return changed;
+  }
+
+  endDay() {
+    this.phase = "dayEnd";
+    this.prompt = "";
+    this.autoCast = false;
+    this.banner = null;
+    this.oldManCue = null;
+    const st = this.day.stats;
+    const rank = DAY.ranks.find(([min]) => this.score >= min)[1];
+    let dailyBest = null;
+    if (this.day.mode === "daily") {
+      const k = `dailyBest:${this.day.date}`;
+      dailyBest = Math.max(store.getInt(k), this.score);
+      store.set(k, dailyBest);
+    }
+    this.dayResult = { id: Math.random().toString(36).slice(2), mode: this.day.mode, date: this.day.date,
+                       score: this.score, rank, stats: st, best: this.bestScore, dailyBest,
+                       isBest: this.score > (this.day.prevBest ?? 0) };
+    this.saveDay();
+    this.snd.stopBGM();
+    this.snd.play(rank === "S" || rank === "A" ? "fanfare_big" : "fanfare");
+  }
+
+  startNewDay(mode) {
+    if (this.phase !== "dayEnd" && this.phase !== "idle") return;
+    this.day = this.freshDay(mode);
+    this.day.prevBest = this.bestScore;
+    this.score = 0;
+    this.combo = 0;
+    this.dayResult = null;
+    this.holds = [];
+    this.fillHolds();
+    this.setSlot(this.slotFor(1));
+    this.saveDay();
+    this.toIdle();
+    const w = WEATHER[this.weatherKey];
+    this.showBanner(mode === "daily" ? `デイリーチャレンジ ${this.day.date}` : "新しい1日",
+                    `${this.slot.name} ${w.icon}${w.name}`, "info", 2.0);
   }
 
   rarityForRoll(r) {
@@ -365,17 +575,7 @@ export class GameModel {
 
   get missThreshold() { return this.rushActive ? RushRules.missThreshold : 0.42; }
 
-  applyGearLimits() {
-    const cap = RushRules.rarityCap(this.rareLv);
-    if (this.result !== null && this.result > cap) this.result = cap;
-    // リール救済は通常時のみ(RUSH中に効くと上乗せが止まらない)
-    if (this.result === null && !this.rushActive && Math.random() < RushRules.reelRescueProbability(this.reelLv)) {
-      let r2 = rand(this.missThreshold, 1.0);
-      r2 = RushRules.reelBoost(r2, this.reelLv);
-      const res = this.rarityForRoll(r2) ?? Rarity.n;
-      this.result = Math.min(res, cap);
-    }
-  }
+
 
   pickReach() {
     if (this.rig === "bluff") { this.reachKind = 2; return; }
@@ -910,15 +1110,18 @@ export class GameModel {
   caught(perfect, small) {
     this.oldManCue = null;
     const r = this.result ?? Rarity.n;
-    let chosen = this.pickSpecies(fishPool[r]);
+    let chosen = this.pickSpecies(fishPool[r], this.currentHold?.u);
     let isSecret = false;
-    // シークレットは図鑑コンプ + 金の竿MAX で解禁
+    // シークレットは図鑑コンプ + 金の竿MAX で解禁。さらに魚ごとの時間帯・天気の条件を満たすものだけ
     const secretOpen = dex.isComplete && this.rareLv >= UPGRADE_COSTS.length;
-    if (this.forceSecret || (secretOpen && Math.random() < 0.04)) {
-      chosen = pick(secretFishPool);
+    const eligible = secretFishPool.filter((f) => this.secretConditionMet(f.name));
+    const hr = this.currentHold;
+    if (this.forceSecret || (secretOpen && eligible.length && (hr?.sec ?? Math.random()) < SECRET_CHANCE)) {
+      const pool = this.forceSecret ? secretFishPool : eligible;
+      chosen = pool[Math.floor((hr?.secPick ?? Math.random()) * pool.length)];
       isSecret = true;
     }
-    const cm = randInt(chosen.cm[0], chosen.cm[1]);
+    const cm = hr ? chosen.cm[0] + Math.floor(hr.cm * (chosen.cm[1] - chosen.cm[0] + 1)) : randInt(chosen.cm[0], chosen.cm[1]);
     const isNew = dex.entry(chosen.name).count === 0;
     dex.log(chosen.name, cm);
     let sc = chosen.score;
@@ -932,6 +1135,18 @@ export class GameModel {
     const baitable = !isSecret && r <= Rarity.r;
     if (!baitable) this.addScore(sc, medal);
     this.combo += 1;
+    // 天井: 小物は気配が溜まり、自力の大物で戻る
+    if (r <= Rarity.r) this.addOmen(OMEN[r]);
+    else if (!this.rushActive && !this.currentHold?.forced) this.resetOmen();
+    // 1日の釣果
+    const st = this.day.stats;
+    if (isSecret) st.secrets += 1; else st.byR[r] += 1;
+    if (isNew) st.newCount += 1;
+    const rank = isSecret ? 6 : r;
+    if (!st.best || rank > st.best.rank || (rank === st.best.rank && cm > st.best.cm)) {
+      st.best = { name: chosen.name, img: chosen.img, cm, rank };
+    }
+    this.saveDay();
 
     const rushGain = RushRules.gain(r, this.rushActive, this.rushLv);
 
@@ -988,18 +1203,27 @@ export class GameModel {
   }
 
   // 同じレア度の中では未登録の魚を3倍出やすくする(図鑑埋めの後押し)
-  pickSpecies(pool) {
+  pickSpecies(pool, u = Math.random()) {
     const w = pool.map((f) => (dex.entry(f.name).count > 0 ? 1 : 3));
-    let x = Math.random() * w.reduce((a, b) => a + b, 0);
+    let x = u * w.reduce((a, b) => a + b, 0);
     for (let i = 0; i < pool.length; i++) { x -= w[i]; if (x < 0) return pool[i]; }
     return pool[pool.length - 1];
   }
 
   addScore(sc, medal) {
     this.score += sc;
-    if (this.score > this.bestScore) { this.bestScore = this.score; store.set("bestScore", this.score); }
+    if (this.score > this.bestScore) { this.bestScore = this.score; store.set("bestDay", this.score); }
     this.medals += medal;
     store.set("medals", this.medals);
+    this.saveDay();
+  }
+
+  secretConditionMet(name) {
+    const c = SECRET_COND[name];
+    if (!c) return true;
+    if (c.slot && this.slot.key !== c.slot) return false;
+    if (c.weather && this.weatherKey !== c.weather) return false;
+    return true;
   }
 
   // choice: "cash"(換金・既定) | "bait"(餌にする) — N・R のみ意味を持つ
@@ -1096,6 +1320,9 @@ export class GameModel {
   escape(reason = "", report = null) {
     this.oldManCue = null;
     this.phase = "escaping";
+    this.addOmen(report && report.kind.type === "lineBreak" ? OMEN.escape : OMEN.miss);
+    this.day.stats.miss += 1;
+    this.saveDay();
     this.prompt = "";
     this.mashTapsLeft = null;
     this.tension = 0;
@@ -1138,6 +1365,11 @@ export class GameModel {
       this.endRush();
       return;
     }
+    if (this.day.cast >= DAY.casts && !this.rushActive) {
+      this.endDay();
+      return;
+    }
+    this.setSlot(this.slotFor(this.day.cast + 1));
     this.phase = "idle";
     this.landed = false;
     this.prompt = this.autoCast ? `AUTO: 強さ${Math.round(this.autoPower * 100)}%で連投中` : "CASTボタン長押しでキャスト";
