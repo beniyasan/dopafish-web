@@ -31,6 +31,11 @@ export const dex = {
   get isComplete() { return fishPool.every(s => s.every(f => this.entry(f.name).count > 0)); },
 };
 
+// リーチ中の「合わせ」 — 突っ込み(battleLunge)の瞬間にタップ
+// cue: 予告リングが縮み始めてから突っ込みまで / great・good: 突っ込み後の受付幅 / early: これより早いと「早い」
+export const HOOK = { cue: 0.6, early: 0.08, great: 0.2, good: 0.4, goodGain: 0.6,
+                      lv: [0.3, 0.7, 1.0], rankUpMinLunges: 4 };
+
 // 通常ED タイムライン(秒) — ui/css と揃える
 export const ENDING = { skipLock: 2.0, teaserAt: 13.5, closeLock: 1.5 };
 
@@ -84,6 +89,11 @@ export class GameModel {
     this.mashT = 0;
     this.mashDur = 3;
     this.mashNeed = 12;
+    this.hookGauge = 0;             // 0..1 合わせゲージ
+    this.hookLunges = 0;            // このリーチの突っ込み回数
+    this.hookLunge = null;          // {id, cueAt, at, judged}
+    this.hookPop = null;            // {id, text, kind}
+    this.hookPerfect = false;       // 合わせLv2以上でPERFECT確定
     this.mashDone = false;
     this.rushCasts = 0;
     this.rushStartScore = 0;
@@ -427,6 +437,12 @@ export class GameModel {
     this.battleT = 0;
     this.spike = 0;
     const k = this.reachKind;
+    this.hookGauge = 0;
+    this.hookLunge = null;
+    this.hookPop = null;
+    this.hookPerfect = false;
+    this.prompt = "突っ込む瞬間にタップで合わせろ!";
+    this.promptHot = false;
     this.fx.shadowSize([0.3, 0.45, 0.7, 0.9, 1.1][k]);
     this.fx.setFightLook(true);
     this.fx.setOrbit([1.8, 2.5, 4.2, 4.0, 5.2][k], [42, 55, 70, 80, 90][k], true);
@@ -435,8 +451,11 @@ export class GameModel {
 
     const dur = [2.4, 4.2, 6.2, 8.2, 9.6][k];
     const lunges = [1, 2, 4, 6, 7][k];
+    this.hookLunges = lunges;
     for (let i = 0; i < lunges; i++) {
-      this.schedule(0.6 + dur * i / lunges, () => this.battleLunge(k >= 2));
+      const t = 0.6 + dur * i / lunges;
+      this.schedule(Math.max(0, t - HOOK.cue), () => this.hookCue(t - Math.max(0, t - HOOK.cue)));
+      this.schedule(t, () => this.battleLunge(k >= 2));
     }
 
     if (k === 0) {
@@ -485,6 +504,47 @@ export class GameModel {
       this.schedule(9.1, () => { this.prompt = "GO!!"; this.snd.play("countgo"); });
     }
     this.schedule(dur, () => this.endReach());
+  }
+
+  // ---- 合わせ ----
+  hookCue(lead) {
+    if (this.phase !== "reach") return;
+    this.hookLunge = { id: Math.random().toString(36).slice(2), cueAt: this.now, at: this.now + lead, judged: false };
+  }
+
+  hookTap() {
+    const l = this.hookLunge;
+    if (!l || l.judged || this.now > l.at + HOOK.good) {
+      this.snd.play("tick");
+      this.fx.splashFX(false);
+      return;
+    }
+    l.judged = true;
+    const d = this.now - l.at;
+    if (d < -HOOK.early) { this.hookResult("早い…", "early", 0); return; }
+    if (d <= HOOK.great) this.hookResult("GREAT!!", "great", 1);
+    else this.hookResult("GOOD!", "good", HOOK.goodGain);
+  }
+
+  hookResult(text, kind, gain) {
+    this.hookPop = { id: Math.random().toString(36).slice(2), text, kind };
+    if (gain <= 0) { this.snd.play("deny"); return; }
+    const before = this.hookLevel;
+    this.hookGauge = Math.min(1, this.hookGauge + gain / Math.max(1, this.hookLunges));
+    // 端数で取りこぼさないよう全GREATなら満タン扱い
+    if (this.hookGauge > 0.999) this.hookGauge = 1;
+    this.snd.play(kind === "great" ? "hook" : "coin");
+    this.haptics.play({ name: "hook" });
+    this.fx.shockwave(kind === "great");
+    this.fx.splashFX(true);
+    if (kind === "great") this.doFlash([255, 255, 255], 0.25, 0.08);
+    if (this.hookLevel > before) this.snd.play("shine");
+  }
+
+  // 0..3 — Lv3(レア度UP)は突っ込みの多い長いリーチだけ
+  get hookLevel() {
+    const lv = HOOK.lv.filter(v => this.hookGauge >= v - 1e-9).length;
+    return this.hookLunges >= HOOK.rankUpMinLunges ? lv : Math.min(2, lv);
   }
 
   battleLunge(strong) {
@@ -553,7 +613,19 @@ export class GameModel {
     this.mashFill = 0;
     this.mashDone = false;
     this.mashDur = 2.4 + 0.32 * this.reachKind + 0.4 * this.reelLv;
-    this.mashNeed = Math.floor((this.result === null ? 999 : MASH_NEED[this.result]) * this.mashMult);
+    // 合わせの効果: Lv1 連打-20% / Lv2 連打-35%+PERFECT確定 / Lv3(完璧・長いリーチのみ) さらにレア度+1
+    const lv = this.hookLevel;
+    this.hookLunge = null;
+    const perks = [];
+    if (lv >= 3 && this.result !== null && this.result < Rarity.lr) {
+      this.result += 1;
+      perks.push("レア度UP");
+    }
+    const cut = lv >= 2 ? 0.65 : lv >= 1 ? 0.8 : 1;
+    if (lv >= 1) perks.push(`連打-${Math.round((1 - cut) * 100)}%`);
+    this.hookPerfect = lv >= 2 && this.result !== null;
+    if (this.hookPerfect) perks.push("PERFECT確定");
+    this.mashNeed = this.result === null ? 999 : Math.max(1, Math.floor(MASH_NEED[this.result] * this.mashMult * cut));
     this.mashTapsLeft = this.result === null ? null : this.mashNeed;
     this.prompt = "連打!!";
     this.promptHot = true;
@@ -561,16 +633,20 @@ export class GameModel {
     this.fx.zoomTo(1.3);
     this.fx.setSpeedLines(Math.max(3, this.reachKind));
     this.fx.setOrbit(3.0, 30, true);
-    this.showBanner("連打!!", "画面を連打で引き上げろ!", "hot", 1.3);
+    if (perks.includes("レア度UP")) {
+      this.doFlash([255, 214, 10], 0.6, 0.3);
+      this.snd.play("perfect");
+      this.fx.sparkleBurst([255, 214, 10]);
+    }
+    this.showBanner(lv >= 1 ? `合わせ Lv${lv}!!` : "連打!!",
+                    lv >= 1 ? perks.join(" / ") : "画面を連打で引き上げろ!",
+                    lv >= 3 ? "gold" : "hot", 1.3);
   }
 
   tapScreen() {
     switch (this.phase) {
       case "mash": this.onMashTap(); break;
-      case "reach":
-        this.snd.play("tick");
-        this.fx.splashFX(false);
-        break;
+      case "reach": this.hookTap(); break;
       case "reveal": this.dismissReveal(); break;
       case "title": this.startGame(); break;
       case "rushEnding": this.dismissRushSummary(); break;
@@ -593,14 +669,14 @@ export class GameModel {
     if (this.result !== null) this.mashTapsLeft = Math.max(0, this.mashNeed - this.mashCount);
     this.haptics.play({ name: "mashTap", progress: this.mashFill, closing: (1 <= this.mashTapsLeft && this.mashTapsLeft <= 5) });
     if (this.result !== null && this.mashCount >= this.mashNeed) {
-      const perfect = this.mashCount >= Math.floor(this.mashNeed * 1.25);
+      const perfect = this.hookPerfect || this.mashCount >= Math.floor(this.mashNeed * 1.25);
       this.resolveCatch(perfect);
     }
   }
 
   resolveMash() {
     if (this.result !== null && this.mashCount >= this.mashNeed) {
-      this.resolveCatch(false);
+      this.resolveCatch(this.hookPerfect);
     } else if (this.result !== null) {
       const fish = pick(fishPool[this.result]);
       const report = makeEscapeReport(

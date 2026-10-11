@@ -70,6 +70,14 @@ export class UI {
         <div id="cast-side-l"><button id="btn-dex" class="pill dim">図鑑<span class="sub" id="dex-count">0/0</span></button></div>
       </div>
 
+      <div id="hook-cue" class="hidden"></div>
+      <div id="hook-pop" class="hidden"></div>
+      <div id="hook-gauge" class="hidden">
+        <span class="gauge-label">合わせ</span>
+        <div class="hook-bar"><div id="hook-fill"></div>
+          <i style="left:30%"></i><i style="left:70%"></i></div>
+        <span id="hook-lv">Lv0</span>
+      </div>
       <div id="battle-gauge" class="hidden">
         <span class="gauge-label">糸</span><div class="gauge"><div id="gauge-fill"></div></div>
       </div>
@@ -330,6 +338,8 @@ export class UI {
       c.phase = m.phase;
       $("cast-zone").classList.toggle("hidden", !(m.phase === "idle" || m.phase === "charging"));
       $("battle-gauge").classList.toggle("hidden", m.phase !== "reach");
+      $("hook-gauge").classList.toggle("hidden", m.phase !== "reach");
+      if (m.phase !== "reach") $("hook-cue").className = "hidden";
       $("mash-meter").classList.toggle("hidden", m.phase !== "mash");
       $("title").classList.toggle("hidden", m.phase !== "title");
       const inBattle = m.phase === "reach" || m.phase === "mash";
@@ -352,6 +362,40 @@ export class UI {
       f.style.width = `${t * 100}%`;
       f.style.background = t > 0.85 ? "#ff3b30" : t > 0.6 ? "#ff9500" : "#34c759";
       f.style.boxShadow = t > 0.85 ? "0 0 6px #ff3b30" : "none";
+    }
+
+    // 合わせ: 予告リング(ウキに追従) / 判定ポップ / ゲージ
+    if (m.phase === "reach") {
+      const l = m.hookLunge, cue = $("hook-cue");
+      if (c.hookCue !== l?.id) {
+        c.hookCue = l?.id;
+        if (l) {
+          cue.className = "";
+          cue.style.setProperty("--lead", `${l.at - l.cueAt}s`);
+          cue.innerHTML = `<div class="hc-target"></div><div class="hc-ring"></div>`;
+        } else cue.className = "hidden";
+      }
+      if (l) {
+        const b = this.scene.bobberXY, p = this.scene.worldToScreen(b.x, b.y);
+        cue.style.transform = `translate(${p.x}px, ${p.y}px)`;
+        if (l.judged || m.now > l.at + 0.4) cue.className = "done";
+      }
+      if (c.hookGauge !== m.hookGauge) {
+        c.hookGauge = m.hookGauge;
+        $("hook-fill").style.width = `${m.hookGauge * 100}%`;
+        const lv = m.hookLevel;
+        $("hook-lv").textContent = `Lv${lv}`;
+        $("hook-gauge").dataset.lv = lv;
+      }
+    }
+    if (c.hookPop !== m.hookPop?.id) {
+      c.hookPop = m.hookPop?.id;
+      const hp = $("hook-pop");
+      if (m.hookPop) {
+        hp.className = `show ${m.hookPop.kind}`;
+        hp.textContent = m.hookPop.text;
+        void hp.offsetWidth;
+      } else hp.className = "hidden";
     }
 
     // mash meter
