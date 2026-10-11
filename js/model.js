@@ -117,7 +117,7 @@ export class GameModel {
   }
 
   get rushStatus() { return rushStatus(this.rushLeft); }
-  get rushBonusProbability() { return RushRules.bonusProbability(this.rareLv, this.reelLv); }
+  get rushBonusProbability() { return RushRules.bonusProbability(this.rareLv); }
 
   // ---- shop ----
   level(i) { return [this.rareLv, this.reelLv, this.rushLv][i]; }
@@ -331,12 +331,14 @@ export class GameModel {
 
   rarityForRoll(r) {
     if (this.rushActive) {
+      // RUSHは「ハズレが少なく点数2倍」が主役。UR以上(=上乗せ)は1割に抑え、SR・SSRを厚くする
+      const t = RushRules.rushTable;
       if (r < RushRules.missThreshold) return null;
-      if (r < 0.36) return Rarity.n;
-      if (r < 0.52) return Rarity.r;
-      if (r < RushRules.bonusThreshold) return Rarity.sr;
-      if (r < 0.82) return Rarity.ssr;
-      if (r < 0.95) return Rarity.ur;
+      if (r < t.n) return Rarity.n;
+      if (r < t.r) return Rarity.r;
+      if (r < t.sr) return Rarity.sr;
+      if (r < RushRules.extendThreshold) return Rarity.ssr;
+      if (r < t.ur) return Rarity.ur;
       return Rarity.lr;
     }
     if (r < 0.42) return null;
@@ -353,7 +355,8 @@ export class GameModel {
   applyGearLimits() {
     const cap = RushRules.rarityCap(this.rareLv);
     if (this.result !== null && this.result > cap) this.result = cap;
-    if (this.result === null && Math.random() < RushRules.reelRescueProbability(this.reelLv)) {
+    // リール救済は通常時のみ(RUSH中に効くと上乗せが止まらない)
+    if (this.result === null && !this.rushActive && Math.random() < RushRules.reelRescueProbability(this.reelLv)) {
       let r2 = rand(this.missThreshold, 1.0);
       r2 = RushRules.reelBoost(r2, this.reelLv);
       const res = this.rarityForRoll(r2) ?? Rarity.n;
@@ -574,6 +577,9 @@ export class GameModel {
     if (this.hookLevel > before) this.snd.play("shine");
   }
 
+  // 合わせのレア度UPはSSRまで(UR/LRへの昇格はRUSH突入・上乗せに直結してしまう)
+  hookCanRankUp(r) { return r !== null && r < Rarity.ssr; }
+
   // 0..3 — Lv3(レア度UP)は突っ込みの多い長いリーチだけ
   get hookLevel() {
     const lv = HOOK.lv.filter(v => this.hookGauge >= v - 1e-9).length;
@@ -646,11 +652,11 @@ export class GameModel {
     this.mashFill = 0;
     this.mashDone = false;
     this.mashDur = 2.4 + 0.32 * this.reachKind + 0.4 * this.reelLv;
-    // 合わせの効果: Lv1 連打-20% / Lv2 連打-35%+PERFECT確定 / Lv3(完璧・長いリーチのみ) さらにレア度+1
+    // 合わせの効果: Lv1 連打-20% / Lv2 連打-35%+PERFECT確定 / Lv3(完璧・長いリーチのみ) さらにレア度+1(SSRまで)
     const lv = this.hookLevel;
     this.hookLunge = null;
     const perks = [];
-    if (lv >= 3 && this.result !== null && this.result < Rarity.lr) {
+    if (lv >= 3 && this.hookCanRankUp(this.result)) {
       this.result += 1;
       perks.push("レア度UP");
     }
@@ -744,7 +750,7 @@ export class GameModel {
   caught(perfect, small) {
     this.oldManCue = null;
     const r = this.result ?? Rarity.n;
-    let chosen = pick(fishPool[r]);
+    let chosen = this.pickSpecies(fishPool[r]);
     let isSecret = false;
     // シークレットは図鑑コンプ + 金の竿MAX で解禁
     const secretOpen = dex.isComplete && this.rareLv >= UPGRADE_COSTS.length;
@@ -770,7 +776,8 @@ export class GameModel {
     const rushGain = RushRules.gain(r, this.rushActive, this.rushLv);
 
     this.reveal = { name: chosen.name, img: chosen.img, rarity: r, cm, score: sc, medals: medal,
-                    perfect, isRecord, rushGain, isSmall: small, isSecret, isNew, baitable };
+                    perfect, isRecord, rushGain, isSmall: small, isSecret, isNew, baitable,
+                    rushMissed: !this.rushActive && r === Rarity.ur && rushGain === 0 };
     this.phase = "reveal";
     // 図鑑初登録: lock taps so leftover mash taps can't skip the reveal
     const entryDelay = cardFXSpec(this.reveal).entryDelay;
@@ -818,6 +825,14 @@ export class GameModel {
       this.fx.coinRain(Math.min(12, medal));
     }
     this.schedule(0.5, () => this.fx.splashFX(true));
+  }
+
+  // 同じレア度の中では未登録の魚を3倍出やすくする(図鑑埋めの後押し)
+  pickSpecies(pool) {
+    const w = pool.map((f) => (dex.entry(f.name).count > 0 ? 1 : 3));
+    let x = Math.random() * w.reduce((a, b) => a + b, 0);
+    for (let i = 0; i < pool.length; i++) { x -= w[i]; if (x < 0) return pool[i]; }
+    return pool[pool.length - 1];
   }
 
   addScore(sc, medal) {
