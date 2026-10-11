@@ -70,6 +70,14 @@ export class UI {
         <div id="cast-side-l"><button id="btn-dex" class="pill dim">図鑑<span class="sub" id="dex-count">0/0</span></button></div>
       </div>
 
+      <div id="hook-cue" class="hidden"></div>
+      <div id="hook-pop" class="hidden"></div>
+      <div id="hook-gauge" class="hidden">
+        <span class="gauge-label">合わせ</span>
+        <div class="hook-bar"><div id="hook-fill"></div>
+          <i style="left:30%"></i><i style="left:70%"></i></div>
+        <span id="hook-lv">Lv0</span>
+      </div>
       <div id="battle-gauge" class="hidden">
         <span class="gauge-label">糸</span><div class="gauge"><div id="gauge-fill"></div></div>
       </div>
@@ -86,6 +94,7 @@ export class UI {
       <div id="reveal" class="hidden"></div>
       <div id="escape-card" class="hidden"></div>
       <div id="rush-end" class="hidden"></div>
+      <div id="ending" class="hidden"></div>
       <div id="dex-overlay" class="hidden"></div>
       <div id="shop-overlay" class="hidden"></div>
       <div id="title" class="hidden">
@@ -139,13 +148,15 @@ export class UI {
     this.$("reveal").addEventListener("pointerdown", () => m.dismissReveal());
     this.$("escape-card").addEventListener("pointerdown", () => m.dismissEscape());
     this.$("rush-end").addEventListener("pointerdown", () => m.dismissRushSummary());
+    this.$("ending").addEventListener("pointerdown", () => m.dismissEnding());
 
     // any other tap on the stage → model.tapScreen + mash ripple
     document.getElementById("app").addEventListener("pointerdown", (e) => {
       if (e.target.closest("button") || e.target.closest("#cast-btn") ||
           e.target.closest("#dex-overlay") || e.target.closest("#shop-overlay") ||
           e.target.closest("#title") || e.target.closest("#reveal") ||
-          e.target.closest("#escape-card") || e.target.closest("#rush-end")) return;
+          e.target.closest("#escape-card") || e.target.closest("#rush-end") ||
+          e.target.closest("#ending")) return;
       const r = document.getElementById("app").getBoundingClientRect();
       const x = (e.clientX - r.left) * 390 / r.width;
       const y = (e.clientY - r.top) * 844 / r.height;
@@ -175,10 +186,14 @@ export class UI {
       for (const f of fishPool[r]) rows += this._dexRow(f, r, false);
     }
     rows += `<div class="dex-sec secret-sec">??? — 幻</div>`;
-    if (dex.caughtSecrets === 0) {
+    if (!this.model.endingSeen && dex.caughtSecrets === 0) {
       rows += `<div class="dex-secret-note">まだ見ぬ魚がいるという噂がある…</div>`;
     } else {
-      for (const f of secretFishPool) if (dex.entry(f.name).count > 0) rows += this._dexRow(f, 5, true);
+      // ED後は黒塗りの枠で存在だけ見せる
+      for (const f of secretFishPool) rows += this._dexRow(f, 5, true);
+      if (dex.caughtSecrets < secretFishPool.length) {
+        rows += `<div class="dex-secret-note">金の竿を極めし者の前にのみ現れる…</div>`;
+      }
     }
     o.innerHTML = `
       <div class="overlay-bg" data-close></div>
@@ -189,21 +204,28 @@ export class UI {
         </div>
         <div class="dex-progress">
           <span>捕獲 ${dex.caughtSpecies} / ${dex.totalSpecies} 種</span>
-          ${dex.caughtSpecies >= dex.totalSpecies ? '<span class="complete">🏆 コンプリート!!</span>' : ""}
+          ${dex.isComplete ? '<span class="complete">🏆 コンプリート!!</span>' : ""}
         </div>
+        ${dex.isComplete ? '<button class="ed-replay" data-replay>🎬 ED再生</button>' : ""}
         <div class="dex-bar"><div style="width:${100 * dex.caughtSpecies / Math.max(1, dex.totalSpecies)}%"></div></div>
         <div class="dex-list">${rows}</div>
       </div>`;
     o.classList.remove("hidden"); o.classList.add("show");
     o.querySelectorAll("[data-close]").forEach((n) =>
       n.addEventListener("pointerdown", () => o.classList.remove("show")));
+    o.querySelector("[data-replay]")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      o.classList.remove("show");
+      this.model.replayEnding();
+    });
   }
 
   _dexRow(f, r, secret) {
     const e = dex.entry(f.name);
     const caught = e.count > 0;
     return `<div class="dex-row ${caught ? "caught" : ""}" style="${caught ? `border:1px solid ${RARITY_COLOR[r]}73` : ""}">
-      <div class="dex-thumb">${caught ? `<img src="${ASSET(f.img)}" alt="${f.name}">` : "?"}</div>
+      <div class="dex-thumb">${caught ? `<img src="${ASSET(f.img)}" alt="${f.name}">`
+        : secret ? `<img class="sil" src="${ASSET(f.img)}" alt="">` : "?"}</div>
       <div class="dex-info">
         <div class="dex-name">${caught ? f.name : "？？？"}${secret ? '<span class="secret-badge">幻</span>' : ""}</div>
         <div class="dex-cm">${caught ? `最大 ${e.maxCm}cm` : "未捕獲"}</div>
@@ -307,15 +329,19 @@ export class UI {
       c.prompt = m.prompt; c.promptHot = m.promptHot;
       const p = $("prompt");
       p.textContent = m.prompt;
-      p.className = m.promptHot ? "hot" : "";
+      p.classList.toggle("hot", !!m.promptHot);
       p.style.opacity = m.prompt ? 1 : 0;
     }
 
     // phase-driven widgets
     if (c.phase !== m.phase) {
       c.phase = m.phase;
-      $("cast-zone").classList.toggle("hidden", !(m.phase === "idle" || m.phase === "charging"));
+      const casting = m.phase === "idle" || m.phase === "charging";
+      $("cast-zone").classList.toggle("hidden", !casting);
+      $("prompt").classList.toggle("above-cast", casting); // CASTボタンと重ならないよう上へ
       $("battle-gauge").classList.toggle("hidden", m.phase !== "reach");
+      $("hook-gauge").classList.toggle("hidden", m.phase !== "reach");
+      if (m.phase !== "reach") $("hook-cue").className = "hidden";
       $("mash-meter").classList.toggle("hidden", m.phase !== "mash");
       $("title").classList.toggle("hidden", m.phase !== "title");
       const inBattle = m.phase === "reach" || m.phase === "mash";
@@ -338,6 +364,40 @@ export class UI {
       f.style.width = `${t * 100}%`;
       f.style.background = t > 0.85 ? "#ff3b30" : t > 0.6 ? "#ff9500" : "#34c759";
       f.style.boxShadow = t > 0.85 ? "0 0 6px #ff3b30" : "none";
+    }
+
+    // 合わせ: 予告リング(ウキに追従) / 判定ポップ / ゲージ
+    if (m.phase === "reach") {
+      const l = m.hookLunge, cue = $("hook-cue");
+      if (c.hookCue !== l?.id) {
+        c.hookCue = l?.id;
+        if (l) {
+          cue.className = "";
+          cue.style.setProperty("--lead", `${l.at - l.cueAt}s`);
+          cue.innerHTML = `<div class="hc-target"></div><div class="hc-ring"></div>`;
+        } else cue.className = "hidden";
+      }
+      if (l) {
+        const b = this.scene.bobberXY, p = this.scene.worldToScreen(b.x, b.y);
+        cue.style.transform = `translate(${p.x}px, ${p.y}px)`;
+        if (l.judged || m.now > l.at + 0.4) cue.className = "done";
+      }
+      if (c.hookGauge !== m.hookGauge) {
+        c.hookGauge = m.hookGauge;
+        $("hook-fill").style.width = `${m.hookGauge * 100}%`;
+        const lv = m.hookLevel;
+        $("hook-lv").textContent = `Lv${lv}`;
+        $("hook-gauge").dataset.lv = lv;
+      }
+    }
+    if (c.hookPop !== m.hookPop?.id) {
+      c.hookPop = m.hookPop?.id;
+      const hp = $("hook-pop");
+      if (m.hookPop) {
+        hp.className = `show ${m.hookPop.kind}`;
+        hp.textContent = m.hookPop.text;
+        void hp.offsetWidth;
+      } else hp.className = "hidden";
     }
 
     // mash meter
@@ -411,6 +471,13 @@ export class UI {
             <div class="om-cut-edge top"></div><div class="om-cut-edge bottom"></div>
           </div>`;
       }
+    }
+
+    // ending
+    const endKey = m.ending ? `${m.ending.id}:${m.ending.teaserAt}` : null;
+    if (c.endKey !== endKey) {
+      c.endKey = endKey;
+      this._renderEnding(m.ending);
     }
 
     // reveal card
@@ -506,6 +573,43 @@ export class UI {
     return `${rays}${sparkles}${rings}
       ${spec.entryFlash ? '<div class="entry-flash"></div>' : ""}
       ${spec.entryShine ? `<div class="shine" style="animation-duration:${spec.shinePeriod || 0.001}s"></div>` : ""}`;
+  }
+
+  // ---------- 通常ED ----------
+
+  _renderEnding(e) {
+    const o = this.$("ending");
+    if (!e) { o.className = "hidden"; o.innerHTML = ""; return; }
+    const all = fishPool.flatMap((pool, r) => pool.map((f) => ({ f, r })));
+    const roll = all.map(({ f, r }) => `
+      <div class="end-fish">
+        <img src="${ASSET(f.img)}" alt="">
+        <div><span class="end-rar" style="color:${RARITY_COLOR[r]}">${RARITY_LABEL[r]}</span>
+             <span class="end-name">${f.name}</span></div>
+      </div>`).join("");
+    const left = secretFishPool.length - dex.caughtSecrets;
+    const sils = secretFishPool.map((f, i) => {
+      const caught = dex.entry(f.name).count > 0;
+      return `<img class="end-sil ${caught ? "caught" : ""}" style="animation-delay:calc(var(--t0) + ${0.3 + i * 0.35}s)" src="${ASSET(f.img)}" alt="">`;
+    }).join("");
+    o.className = `show ${e.skipped ? "skipped" : ""}`;
+    o.innerHTML = `
+      <div class="end-bg"></div>
+      ${e.skipped ? "" : `
+      <div class="end-title"><div class="end-main">図鑑コンプリート!!</div>
+        <div class="end-sub">全${all.length}種 制覇</div></div>
+      <div class="end-roll"><div class="end-roll-inner">
+        <div class="end-roll-head">— 釣り上げた魚たち —</div>${roll}</div></div>
+      <div class="end-theend">THE END</div>
+      <div class="end-skip">タップでスキップ</div>`}
+      <div class="end-teaser">
+        <div class="end-sils">${sils}</div>
+        ${left > 0
+          ? `<div class="end-tease-line">…まだ見ぬ魚が、あと${left}匹いるらしい</div>
+             <div class="end-tease-hint">金の竿を極めし者の前にのみ現れる</div>`
+          : `<div class="end-tease-line">幻の魚も、すべて釣り上げた!</div>`}
+        <div class="end-tap">タップで閉じる</div>
+      </div>`;
   }
 
   // ---------- escape card ----------

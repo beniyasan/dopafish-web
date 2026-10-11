@@ -90,6 +90,14 @@ export class GameScene {
     };
   }
 
+  worldToScreen(x, y) {
+    const z = 1 / this.cam.scale;
+    return {
+      x: 195 + (x - this.cam.x - (this.cam.jx || 0)) * z,
+      y: 422 - (y - this.cam.y - (this.cam.jy || 0)) * z,
+    };
+  }
+
   // draw image upright in y-up world space (ctx already y-flipped)
   img2(img, x, y, w, h) {
     const ctx = this.ctx;

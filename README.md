@@ -39,3 +39,4 @@ iOSアプリ「Dopagaki Fishing Collection」([beniyasan/dopafish](https://githu
 | `?secret` | シークレット魚を確実化 |
 | `?mashneed=0.2` | 連打必要量を20%に(逃げ検証用) |
 | `?rush=N` | RUSH N回転の状態で開始 |
+| `?ending` | 開始時に通常EDを再生 |
