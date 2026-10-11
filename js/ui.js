@@ -89,6 +89,19 @@ export class UI {
         <div id="mash-row"><span id="mash-count">0</span><span class="mash-cap">連打!</span><span id="mash-remain">0.0</span></div>
       </div>
 
+      <div id="hold-meter" class="hidden">
+        <div class="fight-label">テンション</div>
+        <div class="hold-track"><div id="hold-zone"></div><div class="hold-red"></div><div id="hold-needle"></div></div>
+        <div class="fight-bar"><div id="hold-fill"></div></div>
+        <div class="fight-row"><span class="fight-cap" id="hold-cap">長押しで緑をキープ</span><span class="fight-remain" id="hold-remain">0.0</span></div>
+      </div>
+
+      <div id="rhythm-meter" class="hidden">
+        <div class="rhythm-lane"><div class="rhythm-hit"></div><div id="rhythm-notes"></div></div>
+        <div class="fight-bar"><div id="rhythm-fill"></div></div>
+        <div class="fight-row"><span class="fight-cap">円に重なる瞬間にタップ</span><span class="fight-remain" id="rhythm-remain">0.0</span></div>
+      </div>
+
       <div id="oldman-callout" class="hidden"></div>
       <div id="oldman-cutin" class="hidden"></div>
       <div id="banner" class="hidden"></div>
@@ -167,6 +180,11 @@ export class UI {
       }
       m.tapScreen();
     });
+
+    // 長押しファイト: どこで離しても解除
+    const up = () => m.releaseScreen();
+    addEventListener("pointerup", up);
+    addEventListener("pointercancel", up);
 
     this._syncIcons();
   }
@@ -363,15 +381,31 @@ export class UI {
     }
 
     // phase-driven widgets
-    if (c.phase !== m.phase) {
-      c.phase = m.phase;
+    const phaseChanged = c.phase !== m.phase;
+    c.phase = m.phase;
+    if (phaseChanged) {
       const casting = m.phase === "idle" || m.phase === "charging";
       $("cast-zone").classList.toggle("hidden", !casting);
       $("prompt").classList.toggle("above-cast", casting); // CASTボタンと重ならないよう上へ
       $("battle-gauge").classList.toggle("hidden", m.phase !== "reach");
       $("hook-gauge").classList.toggle("hidden", m.phase !== "reach");
       if (m.phase !== "reach") $("hook-cue").className = "hidden";
-      $("mash-meter").classList.toggle("hidden", m.phase !== "mash");
+    }
+    const fightKey = m.phase === "mash" ? m.fightType : null;
+    if (c.fightKey !== fightKey) {
+      c.fightKey = fightKey;
+      $("mash-meter").classList.toggle("hidden", fightKey !== "mash");
+      $("hold-meter").classList.toggle("hidden", fightKey !== "hold");
+      $("rhythm-meter").classList.toggle("hidden", fightKey !== "rhythm");
+      if (fightKey === "hold") {
+        const [lo, hi] = m.holdZone;
+        Object.assign($("hold-zone").style, { left: `${lo * 100}%`, width: `${(hi - lo) * 100}%` });
+      }
+      if (fightKey === "rhythm") {
+        $("rhythm-notes").innerHTML = m.rhythmNotes.map((n) => `<i data-n="${n.id}"></i>`).join("");
+      }
+    }
+    if (phaseChanged) {
       $("title").classList.toggle("hidden", m.phase !== "title");
       const inBattle = m.phase === "reach" || m.phase === "mash";
       $("vignette").classList.toggle("hidden", !inBattle);
@@ -429,8 +463,36 @@ export class UI {
       } else hp.className = "hidden";
     }
 
+    // 長押しメーター
+    if (fightKey === "hold") {
+      const t = Math.min(1, m.holdTension), [lo, hi] = m.holdZone;
+      const st = t > hi ? "over" : t >= lo ? "ok" : "under";
+      const nd = $("hold-needle");
+      nd.style.left = `${t * 100}%`;
+      nd.className = st;
+      $("hold-fill").style.width = `${Math.min(1, m.fightProg) * 100}%`;
+      $("hold-remain").textContent = m.mashRemain.toFixed(1);
+      if (c.holdSt !== st) {
+        c.holdSt = st;
+        $("hold-cap").textContent = st === "over" ? "緩めて!! 糸が切れる!" : st === "ok" ? "そのままキープ!" : "長押しで巻け!";
+        $("hold-cap").className = `fight-cap ${st}`;
+      }
+    }
+    // リズムレーン: ノーツは判定円(左)へ 200px/秒 で流れる
+    if (fightKey === "rhythm") {
+      for (const n of m.rhythmNotes) {
+        const el = $("rhythm-notes").querySelector(`[data-n="${n.id}"]`);
+        if (!el) continue;
+        const x = 36 + (n.t - m.now) * 200;
+        el.style.transform = `translateX(${x}px)`;
+        el.className = n.judged ?? (x < 360 ? "on" : "");
+      }
+      $("rhythm-fill").style.width = `${Math.min(1, m.fightProg) * 100}%`;
+      $("rhythm-remain").textContent = m.mashRemain.toFixed(1);
+    }
+
     // mash meter
-    if (m.phase === "mash") {
+    if (fightKey === "mash") {
       $("mash-fill").style.width = `${Math.max(0, Math.min(1, m.mashFill)) * 100}%`;
       if (c.mashCount !== m.mashCount) { $("mash-count").textContent = m.mashCount; c.mashCount = m.mashCount; }
       $("mash-remain").textContent = m.mashRemain.toFixed(1);
@@ -678,7 +740,8 @@ export class UI {
         ${rep.isUndiscovered ? '<div class="esc-undiscovered">図鑑未登録の魚だった…</div>' : ""}
         <div class="esc-progress">
           <div class="esc-bar"><div style="width:${rep.progress * 100}%"></div></div>
-          <div class="esc-taps">連打 ${Math.floor(rep.progress * 100)}%・あと${rep.tapsShort}回</div>
+          <div class="esc-taps">${rep.fight === "mash" ? `連打 ${Math.floor(rep.progress * 100)}%・あと${rep.tapsShort}回`
+            : `引き寄せ ${Math.floor(rep.progress * 100)}%`}</div>
         </div>`;
     } else {
       border = "rgba(153,153,153,.5)";

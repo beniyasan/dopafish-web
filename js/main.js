@@ -25,13 +25,13 @@ addEventListener("resize", fit);
 fit();
 
 // keyboard: hold space to charge, release to cast; other keys tap
+// (ファイト中はどのキーも画面タップ扱い。長押しファイトは押している間だけ巻く)
 addEventListener("keydown", (e) => {
   if (e.repeat) return;
-  if (e.code === "Space") { e.preventDefault(); model.pressCast(); }
-  else if (e.code === "Enter") model.tapScreen();
+  if (e.code === "Space") { e.preventDefault(); if (model.phase === "mash") model.tapScreen(); else model.pressCast(); }
   else model.tapScreen();
 });
-addEventListener("keyup", (e) => { if (e.code === "Space") model.releaseCast(); });
+addEventListener("keyup", (e) => { if (e.code === "Space") model.releaseCast(); model.releaseScreen(); });
 addEventListener("contextmenu", (e) => e.preventDefault());
 
 let last = performance.now();

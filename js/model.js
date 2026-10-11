@@ -1,7 +1,8 @@
 // GameModel — faithful JS port of GameModel.swift
 import { Rarity, RARITY_LABEL, RARITY_COLOR, fishPool, secretFishPool, OLD_MAN, OLDMAN_HEAT,
          UPGRADES, UPGRADE_COSTS, RushRules, rushStatus, ESCAPE, makeEscapeReport,
-         cardFXSpec, MASH_NEED, BAIT, BAIT_SHOP, rand, randInt, pick } from "./data.js";
+         cardFXSpec, MASH_NEED, BAIT, BAIT_SHOP, fightTypeFor, HOLD, RHYTHM,
+         rand, randInt, pick } from "./data.js";
 
 const LS = window.localStorage;
 const store = {
@@ -99,6 +100,16 @@ export class GameModel {
     this.hookPop = null;            // {id, text, kind}
     this.hookPerfect = false;       // 合わせLv2以上でPERFECT確定
     this.mashDone = false;
+    this.fightType = "mash";        // mash | hold | rhythm
+    this.fightProg = 0;             // hold/rhythm の引き寄せ 0..1
+    this.holding = false;           // hold: 押している
+    this.holdTension = 0;
+    this.holdZone = [0.4, 0.7];
+    this.holdOver = 0;              // hold: ゾーン外にいた秒数(PERFECT判定)
+    this.holdSurgeAt = 0;
+    this.rhythmNotes = [];          // [{t, judged}] t は this.now 基準
+    this.rhythmScore = 0;
+    this.rhythmAllGreat = true;
     this.rushCasts = 0;
     this.rushStartScore = 0;
     this.escapeShownAt = 0;
@@ -177,8 +188,10 @@ export class GameModel {
       case "mash":
         this.mashT += dt;
         this.mashRemain = Math.max(0, this.mashDur - this.mashT);
-        if (this.autoWin) this.onMashTap();
-        if (this.mashRemain <= 0) this.resolveMash();
+        if (this.fightType === "hold") this.tickHold(dt);
+        else if (this.fightType === "rhythm") this.tickRhythm();
+        else if (this.autoWin) this.onMashTap();
+        if (this.phase === "mash" && !this.mashDone && this.mashRemain <= 0) this.resolveMash();
         break;
       case "ending":
         if (this.ending && !this.ending.teaserPlayed && this.now >= this.ending.teaserAt) {
@@ -661,12 +674,24 @@ export class GameModel {
       perks.push("レア度UP");
     }
     const cut = lv >= 2 ? 0.65 : lv >= 1 ? 0.8 : 1;
-    if (lv >= 1) perks.push(`連打-${Math.round((1 - cut) * 100)}%`);
+    if (lv >= 1) perks.push(`ノルマ-${Math.round((1 - cut) * 100)}%`);
     this.hookPerfect = lv >= 2 && this.result !== null;
     if (this.hookPerfect) perks.push("PERFECT確定");
+    // 外れ(影)は見た目のリーチの大きさに合わせた種類にする
+    const asRarity = this.result ?? [Rarity.n, Rarity.n, Rarity.sr, Rarity.ur, Rarity.ur][this.reachKind];
+    this.fightType = fightTypeFor(asRarity);
+    this.fightProg = 0;
     this.mashNeed = this.result === null ? 999 : Math.max(1, Math.floor(MASH_NEED[this.result] * this.mashMult * cut));
-    this.mashTapsLeft = this.result === null ? null : this.mashNeed;
-    this.prompt = "連打!!";
+    this.mashTapsLeft = this.result === null || this.fightType !== "mash" ? null : this.mashNeed;
+    if (this.fightType === "hold") this.setupHold(asRarity, cut);
+    if (this.fightType === "rhythm") this.setupRhythm(asRarity, cut);
+    const intro = {
+      mash:   ["連打!!", "連打!!", "画面を連打で引き上げろ!"],
+      hold:   ["", "テンション勝負!!", "長押しで緑ゾーンを保て!"],
+      rhythm: ["", "リズムバトル!!", "円に重なる瞬間にタップ!"],
+    }[this.fightType];
+    // 長押し・リズムはメーター内に操作説明があるので、下の大きな案内は出さない
+    this.prompt = this.fightType === "mash" ? intro[0] : "";
     this.promptHot = true;
     this.snd.play("cutin");
     this.fx.zoomTo(1.3);
@@ -677,14 +702,142 @@ export class GameModel {
       this.snd.play("perfect");
       this.fx.sparkleBurst([255, 214, 10]);
     }
-    this.showBanner(lv >= 1 ? `合わせ Lv${lv}!!` : "連打!!",
-                    lv >= 1 ? perks.join(" / ") : "画面を連打で引き上げろ!",
+    this.showBanner(lv >= 1 ? `合わせ Lv${lv}!!` : intro[1],
+                    lv >= 1 ? perks.join(" / ") : intro[2],
                     lv >= 3 ? "gold" : "hot", 1.3);
   }
 
+  // ---- 長押し(SR・SSR) ----
+  setupHold(r, cut) {
+    this.holdZone = HOLD.zone[r];
+    this.holdNeed = HOLD.needTime[r] * this.mashMult * cut;
+    this.holdSurge = HOLD.surge[r];
+    this.holdTension = this.holdZone[0] - 0.08;
+    this.holding = false;
+    this.holdOver = 0;
+    this.holdSurgeAt = this.mashT + rand(0.9, 1.5);
+    this.mashDur = this.holdNeed * 2 + 1.2 + 0.4 * this.reelLv;
+  }
+
+  tickHold(dt) {
+    if (this.mashDone) return;
+    const [lo, hi] = this.holdZone;
+    if (this.autoWin) this.holding = this.holdTension < (lo + hi) / 2;
+    this.holdTension += (this.holding ? HOLD.rise : -HOLD.fall) * dt;
+    if (this.mashT >= this.holdSurgeAt) {
+      // 魚が暴れてテンションが跳ね上がる
+      this.holdTension += rand(this.holdSurge[0], this.holdSurge[1]);
+      this.holdSurgeAt = this.mashT + rand(0.7, 1.4);
+      this.fx.bobberDip(1.1); this.fx.shake(4); this.fx.splashFX(true);
+      this.snd.play("surge");
+      this.haptics.play({ name: "surge", strong: false });
+    }
+    this.holdTension = Math.max(0, this.holdTension);
+    const inZone = this.holdTension >= lo && this.holdTension <= hi;
+    if (inZone) this.fightProg += dt / this.holdNeed;
+    else {
+      if (this.mashT > 0.8) this.holdOver += dt; // 最初の立ち上がりは見逃す
+      if (this.holdTension < lo) this.fightProg = Math.max(0, this.fightProg - HOLD.slip * dt);
+    }
+    if (this.result === null) this.fightProg = Math.min(this.fightProg, 0.85 + 0.03 * Math.sin(this.mashT * 9));
+    this.mashFill = Math.min(1, this.fightProg);
+    if (this.holdTension >= 1) { this.fightFail(true); return; }
+    if (this.result !== null && this.fightProg >= 1) {
+      this.resolveCatch(this.hookPerfect || this.holdOver < 0.4);
+    }
+  }
+
+  // ---- リズム(UR・LR) ----
+  setupRhythm(r, cut) {
+    const iv = RHYTHM.interval[r], n = RHYTHM.notes[r];
+    this.rhythmNotes = Array.from({ length: n }, (_, i) =>
+      ({ id: i, t: this.now + RHYTHM.leadIn + i * iv, judged: null }));
+    this.rhythmNeed = Math.max(1, RHYTHM.need[r] * this.mashMult * cut);
+    this.rhythmScore = 0;
+    this.rhythmAllGreat = true;
+    this.rhythmBeat = 0;
+    this.mashDur = RHYTHM.leadIn + n * iv + 0.4;
+  }
+
+  tickRhythm() {
+    if (this.mashDone) return;
+    for (const nt of this.rhythmNotes) {
+      if (nt.judged) continue;
+      if (this.autoWin && this.now >= nt.t) { this.judgeNote(nt, 0); continue; }
+      if (this.now > nt.t + RHYTHM.good) { nt.judged = "miss"; this.rhythmAllGreat = false; this.fightPop("MISS", "early"); }
+    }
+    // メトロノーム
+    while (this.rhythmBeat < this.rhythmNotes.length && this.now >= this.rhythmNotes[this.rhythmBeat].t) {
+      this.rhythmBeat++;
+      this.snd.play("tick");
+    }
+  }
+
+  rhythmTap() {
+    if (this.mashDone) return;
+    let best = null;
+    for (const nt of this.rhythmNotes) {
+      if (nt.judged) continue;
+      if (!best || Math.abs(nt.t - this.now) < Math.abs(best.t - this.now)) best = nt;
+    }
+    if (best && Math.abs(best.t - this.now) <= RHYTHM.good + 0.05) this.judgeNote(best, this.now - best.t);
+    else {
+      // 闇雲な連打は減点
+      this.rhythmScore = Math.max(0, this.rhythmScore - RHYTHM.strayPenalty);
+      this.rhythmAllGreat = false;
+      this.fightPop("ミス", "early");
+      this.syncRhythmProg();
+    }
+  }
+
+  judgeNote(nt, d) {
+    const ad = Math.abs(d);
+    if (ad <= RHYTHM.great) { nt.judged = "great"; this.rhythmScore += 1; this.fightPop("GREAT!!", "great"); this.snd.play("reel"); }
+    else if (ad <= RHYTHM.good) { nt.judged = "good"; this.rhythmScore += 0.6; this.rhythmAllGreat = false; this.fightPop("GOOD!", "good"); this.snd.play("reel"); }
+    else { nt.judged = "miss"; this.rhythmAllGreat = false; this.fightPop("MISS", "early"); }
+    if (nt.judged !== "miss") {
+      this.fx.bobberDip(0.7); this.fx.shockwave(nt.judged === "great"); this.fx.splashFX(true);
+      this.haptics.play({ name: "mashTap", progress: this.fightProg, closing: false });
+    }
+    this.syncRhythmProg();
+    if (this.result !== null && this.fightProg >= 1) this.resolveCatch(this.hookPerfect || this.rhythmAllGreat);
+  }
+
+  syncRhythmProg() {
+    this.fightProg = this.rhythmScore / (this.result === null ? this.rhythmNeed / 0.85 : this.rhythmNeed);
+    if (this.result === null) this.fightProg = Math.min(this.fightProg, 0.85);
+    this.mashFill = Math.min(1, this.fightProg);
+  }
+
+  fightPop(text, kind) { this.hookPop = { id: Math.random().toString(36).slice(2), text, kind }; }
+
+  // 長押し・リズムの失敗(snapped: 糸切れ)
+  fightFail(snapped) {
+    if (this.mashDone) return;
+    this.mashDone = true;
+    const prog = Math.round(Math.min(1, this.fightProg) * 100);
+    if (this.result === null) {
+      this.escape("", makeEscapeReport({ type: "bluff" }, 0, 0));
+      return;
+    }
+    const fish = pick(fishPool[this.result]);
+    this.escape("", makeEscapeReport(
+      { type: "lineBreak", rarity: this.result, fishName: fish.name, img: fish.img, snapped,
+        cm: randInt(fish.cm[0], fish.cm[1]), discovered: dex.entry(fish.name).count > 0 },
+      prog, 100, this.fightType));
+  }
+
+  // 長押しの入力(画面を押す/離す)
+  pressScreen() { if (this.phase === "mash" && this.fightType === "hold") this.holding = true; }
+  releaseScreen() { this.holding = false; }
+
   tapScreen() {
     switch (this.phase) {
-      case "mash": this.onMashTap(); break;
+      case "mash":
+        if (this.fightType === "hold") this.pressScreen();
+        else if (this.fightType === "rhythm") this.rhythmTap();
+        else this.onMashTap();
+        break;
       case "reach": this.hookTap(); break;
       case "reveal": this.dismissReveal(); break;
       case "title": this.startGame(); break;
@@ -714,6 +867,12 @@ export class GameModel {
   }
 
   resolveMash() {
+    if (this.fightType !== "mash") {
+      // 時間切れ: リズムはノーツを叩き切って足りなければ逃げられる
+      if (this.result !== null && this.fightProg >= 1) this.resolveCatch(this.hookPerfect);
+      else this.fightFail(false);
+      return;
+    }
     if (this.result !== null && this.mashCount >= this.mashNeed) {
       this.resolveCatch(this.hookPerfect);
     } else if (this.result !== null) {
@@ -738,8 +897,9 @@ export class GameModel {
     this.fx.hookLunge();
     this.fx.splashFX(true);
     this.fx.shockwave(true);
+    this.holding = false;
     if (perfect) {
-      this.showBanner("激連打 PERFECT!!", "", "gold", 1.0);
+      this.showBanner({ mash: "激連打 PERFECT!!", hold: "完璧な駆け引き PERFECT!!", rhythm: "フルコンボ PERFECT!!" }[this.fightType], "", "gold", 1.0);
       this.snd.play("perfect");
     }
     const r = this.result ?? Rarity.n;
