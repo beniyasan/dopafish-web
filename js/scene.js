@@ -3,7 +3,14 @@ import { tex, buildTextures, tinted, Emitter, rgb, rgba } from "./particles.js";
 import { rand, randInt, pick } from "./data.js";
 
 const W = 390, H = 844, WATER_Y = 442;
-const ROD_TIP = { x: 55, y: 140 };
+// ロッド(ワールド座標は y が上向き)。根元を支点に角度とブランクのしなりをバネで動かす
+const ROD = {
+  butt: { x: 70, y: 6 }, len: 150,
+  rest: 0.55,          // 待機時の角度(0=真上、+で海側へ倒す)
+  back: -0.45,         // 溜めきったときの振りかぶり角度
+  forward: 1.2,        // 振り抜きの角度
+  swingTime: 0.14,     // 振り抜きにかける秒数
+};
 
 function grad(w, h, top, bottom) {
   const c = document.createElement("canvas");
@@ -37,7 +44,7 @@ export class GameScene {
     this.dipOffset = 0; this.dipVel = 0;
     this.lineAlpha = 0;
     this.cam = { x: 195, y: 422, scale: 1 };
-    this.rodRot = 0.5;
+    this.rod = { ang: ROD.rest, vel: 0, bend: 0.05, bendVel: 0, swingT: -1, reel: 0, lastMash: 0, gold: 0 };
     this.rushTintAlpha = 0;
     this.rushOn = false;
     this.flying = false;      // cast tween driving bobberXY
@@ -141,10 +148,12 @@ export class GameScene {
     this.lineAlpha = 1;
     this.bobberPos = { x: 195 + rand(-50, 50), y: 320 + 90 * power };
     const c = { x: 195, y: this.bobberPos.y + 260 * power };
-    const from = { ...ROD_TIP }, to = this.bobberPos;
+    const to = this.bobberPos;
     this.flying = true;
+    this.rod.swingT = 0; // 振り抜き開始
     this.tween(0.45, (f) => {
-      const u = 1 - f;
+      // 仕掛けは振り抜き中のロッド先端(動いている)から飛び出す
+      const from = this.rodTip(), u = 1 - f;
       this.bobberXY.x = u * u * from.x + 2 * u * f * c.x + f * f * to.x;
       this.bobberXY.y = u * u * from.y + 2 * u * f * c.y + f * f * to.y;
     });
@@ -152,8 +161,63 @@ export class GameScene {
 
   lureLanded() { this.flying = false; this.bobberXY = { ...this.bobberPos }; }
 
+  // ブランク上の点(t=0 根元 … 1 先端)。しなりは先端ほど大きい放物線
+  rodPoint(t) {
+    const { ang, bend } = this.rod;
+    const dx = Math.sin(ang), dy = Math.cos(ang);   // 竿の向き
+    const px = Math.cos(ang), py = -Math.sin(ang);  // 海側(前下)への法線
+    const along = ROD.len * t, off = bend * ROD.len * t * t;
+    return { x: ROD.butt.x + dx * along + px * off, y: ROD.butt.y + dy * along + py * off };
+  }
+  rodTip() { return this.rodPoint(1); }
+
+  rodKick(angVel, bendVel = 0) { this.rod.vel += angVel; this.rod.bendVel += bendVel; }
+
+  updateRod(dt, logic) {
+    const rd = this.rod, ph = logic?.phase;
+    // 狙う角度・しなり
+    let target = ROD.rest, bendBias = 0.05, k = 60, c = 11;
+    if (ph === "charging") {
+      const cp = logic.chargePower ?? 0;
+      target = ROD.rest + (ROD.back - ROD.rest) * cp;
+      bendBias = -0.08 * cp;
+      if (cp >= 1) target += Math.sin(this.t * 40) * 0.015; // 溜めきりで震える
+    } else if (this.fightMode) {
+      // ファイト中は竿を立てて耐える。テンションで先端が海側へ絞り込まれる
+      const ten = Math.min(1, logic?.fightType === "hold" && ph === "mash" ? logic.holdTension : (logic?.tension ?? 0));
+      target = 0.28 + Math.sin(this.t * 2.1) * 0.03;
+      bendBias = 0.12 + ten * 0.38;
+    } else if (ph === "waiting" || ph === "idle") {
+      target = ROD.rest + Math.sin(this.t * 1.3) * 0.02;
+    }
+    if (rd.swingT >= 0) {
+      // 振り抜き: 硬いバネで一気に前へ、その後ゆっくり待機角度へ戻す
+      rd.swingT += dt;
+      if (rd.swingT < ROD.swingTime) { target = ROD.forward; k = 900; c = 38; }
+      else if (rd.swingT < ROD.swingTime + 0.35) { target = ROD.rest + 0.25; k = 120; c = 16; }
+      else rd.swingT = -1;
+    }
+    const prevVel = rd.vel;
+    rd.vel += (k * (target - rd.ang) - c * rd.vel) * dt;
+    rd.ang += rd.vel * dt;
+    // ブランクのしなり: 角加速度に引っ張られて先端が遅れ、止まると跳ね返る
+    const angAcc = (rd.vel - prevVel) / Math.max(dt, 1e-3);
+    rd.bendVel += (-220 * (rd.bend - bendBias) - 9 * rd.bendVel - 0.0016 * angAcc * 60) * dt;
+    rd.bend += rd.bendVel * dt;
+    rd.bend = Math.max(-0.45, Math.min(0.6, rd.bend));
+    // リール: 連打・リズム成功で回し、長押し中は回し続ける
+    const taps = (logic?.mashCount ?? 0) + Math.round((logic?.rhythmScore ?? 0) * 10);
+    if (taps !== rd.lastMash) {
+      if (taps > rd.lastMash && ph === "mash") { rd.reel += 1.4; rd.bendVel += 1.2; }
+      rd.lastMash = taps;
+    }
+    if (ph === "mash" && logic?.holding) rd.reel += dt * 16;
+    rd.gold = (logic?.rareLv ?? 0) / 5;
+  }
+
   bobberDip(strength) {
     this.dipVel += 60 * strength;
+    this.rod.bendVel += (this.fightMode ? 2.2 : 0.8) * strength; // 魚の引きが穂先に伝わる
     this.splashFX(strength > 0.7);
   }
 
@@ -198,6 +262,7 @@ export class GameScene {
   }
 
   hookLunge() {
+    this.rodKick(-5, -2.5); // 釣り上げで竿をあおる
     this.orbitVisible = false;
     const sx = this.bobberXY.x, sy = this.bobberXY.y - 50;
     this.shadowXY = { x: sx, y: sy };
@@ -215,6 +280,7 @@ export class GameScene {
   }
 
   lineSnap() {
+    this.rodKick(-3, -6);   // 糸切れで竿が跳ね戻る
     this.lineFlicker = { age: 0, dur: 0.36 };
     this.snapping = true;
     const dir = Math.random() < 0.5 ? -170 : 170;
@@ -591,8 +657,7 @@ export class GameScene {
       this.bobberXY.x = this.bobberPos.x;
     }
     this.bobberTilt = this.fightMode ? (logic?.tension ?? 0) * 0.4 * ((this.t * 8) % 2) - 0.2 : 0;
-    const targetBend = this.fightMode ? 0.5 - (logic?.tension ?? 0) * 0.55 : 0.5;
-    this.rodRot += (targetBend - this.rodRot) * Math.min(1, dt * 5);
+    this.updateRod(dt, logic);
 
     // orbit shadow
     this.shadowAlpha = this.shadowAlpha ?? 0;
@@ -769,12 +834,7 @@ export class GameScene {
     for (const n of this.teasers) if (n.z > 3 && n.z < 12) n.draw(ctx);
 
     // rod (z6)
-    ctx.save();
-    ctx.translate(48, 95);
-    ctx.rotate(this.rodRot);
-    ctx.fillStyle = "rgb(89,51,26)";
-    roundRect(ctx, -2.5, -55, 5, 110, 2); ctx.fill();
-    ctx.restore();
+    this.drawRod(ctx);
 
     // line (z7)
     if (this.lineAlpha > 0.01) {
@@ -782,9 +842,10 @@ export class GameScene {
       ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = 1.2;
       const sag = this.fightMode ? -6 : 10;
       ctx.beginPath();
-      ctx.moveTo(ROD_TIP.x, ROD_TIP.y);
-      ctx.quadraticCurveTo((ROD_TIP.x + this.bobberXY.x) / 2,
-        Math.max(ROD_TIP.y, this.bobberXY.y) + sag, this.bobberXY.x, this.bobberXY.y);
+      const tip = this.rodTip();
+      ctx.moveTo(tip.x, tip.y);
+      ctx.quadraticCurveTo((tip.x + this.bobberXY.x) / 2,
+        Math.max(tip.y, this.bobberXY.y) + sag, this.bobberXY.x, this.bobberXY.y);
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
@@ -861,9 +922,66 @@ export class GameScene {
     ctx.restore();
   }
 
+  drawRod(ctx) {
+    const N = 16, rd = this.rod;
+    const pts = Array.from({ length: N + 1 }, (_, i) => this.rodPoint(i / N));
+    ctx.save();
+    ctx.lineCap = "round";
+    // ブランク: 根元8px → 先端1.8px にテーパー。海の青に埋もれないよう明るい縁取りを先に描く
+    for (const [extra, col] of [[2.4, "rgba(255,255,255,.45)"], [0, null]]) {
+      for (let i = 0; i < N; i++) {
+        const t = i / N;
+        ctx.strokeStyle = col ?? rodColor(rd.gold, false);
+        ctx.lineWidth = 8 - 6.2 * t + extra;
+        ctx.beginPath(); ctx.moveTo(pts[i].x, pts[i].y); ctx.lineTo(pts[i + 1].x, pts[i + 1].y); ctx.stroke();
+      }
+    }
+    // ハイライト
+    ctx.strokeStyle = rodColor(rd.gold, true); ctx.globalAlpha = 0.55; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(pts[3].x, pts[3].y);
+    for (let i = 4; i <= N - 2; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke(); ctx.globalAlpha = 1;
+    // コルクグリップ
+    const g0 = this.rodPoint(0), g1 = this.rodPoint(0.22);
+    ctx.strokeStyle = "#c9a066"; ctx.lineWidth = 10;
+    ctx.beginPath(); ctx.moveTo(g0.x, g0.y); ctx.lineTo(g1.x, g1.y); ctx.stroke();
+    ctx.strokeStyle = "rgba(120,80,40,.55)"; ctx.lineWidth = 10;
+    for (const t of [0.06, 0.12, 0.18]) {
+      const a = this.rodPoint(t - 0.005), b = this.rodPoint(t + 0.005);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+    // ガイド
+    ctx.strokeStyle = "rgba(220,220,230,.9)"; ctx.lineWidth = 1.2;
+    for (const t of [0.42, 0.6, 0.76, 0.9, 1]) {
+      const p = this.rodPoint(t);
+      ctx.beginPath(); ctx.arc(p.x, p.y, 1.8 + (1 - t) * 1.6, 0, Math.PI * 2); ctx.stroke();
+    }
+    // リール(竿の下側にぶら下がる)。ハンドルが回る
+    const rp = this.rodPoint(0.27), ang = rd.ang;
+    const nx = Math.cos(ang), ny = -Math.sin(ang); // 下側
+    const cx = rp.x + nx * 9, cy = rp.y + ny * 9;
+    ctx.fillStyle = "#3a3f4a";
+    ctx.beginPath(); ctx.arc(cx, cy, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#9aa3b2";
+    ctx.beginPath(); ctx.arc(cx, cy, 4.5, 0, Math.PI * 2); ctx.fill();
+    const hx = cx + Math.cos(rd.reel) * 9, hy = cy + Math.sin(rd.reel) * 9;
+    ctx.strokeStyle = "#cfd5df"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(hx, hy); ctx.stroke();
+    ctx.fillStyle = "#222";
+    ctx.beginPath(); ctx.arc(hx, hy, 2.6, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
   handleTap(x, y, wasMash) {
     if (wasMash) this.tapRipple(x, y);
   }
+}
+
+// 竿の色: 金の竿Lvで 紺 → 金 に寄せる
+function rodColor(g, light) {
+  const a = [22, 24, 34], b = [214, 160, 40];
+  const m = a.map((v, i) => Math.round(v + (b[i] - v) * g + (light ? 60 : 0)));
+  return `rgb(${m[0]},${m[1]},${m[2]})`;
 }
 
 function roundRect(ctx, x, y, w, h, r) {
