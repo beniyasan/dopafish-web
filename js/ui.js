@@ -460,14 +460,22 @@ export class UI {
       <div class="reveal-dim" style="opacity:${spec.dimOpacity}"></div>
       ${fx}
       <div class="reveal-scroll">
-        <div class="reveal-card tier${spec.tier} ${spec.hueCycle ? "huecycle" : ""}"
+        <div class="reveal-card tier${spec.tier} ${spec.hueCycle ? "huecycle" : ""} ${r.isNew ? "is-new" : ""}"
              style="--accent:${spec.accent};--entry-scale:${spec.entryScale};--entry-spin:${spec.entrySpin}deg;--entry-delay:${spec.entryDelay}s">
           <div class="rarity ${spec.labelPulse ? "pulse" : ""}"
                style="${spec.hueCycle
                  ? "background-image:linear-gradient(90deg,#ff3b30,#ff9500,#ffd60a,#34c759,#007aff,#af52de)"
                  : `color:${spec.accent}`};text-shadow:0 0 16px ${spec.accent}">${label}</div>
           ${r.isSecret ? '<div class="secret-label">✦ シークレット!! ✦</div>' : ""}
-          <img class="fish-art" src="${ASSET(r.img)}" alt="${r.name}">
+          ${r.isNew ? `
+          <div class="new-art">
+            <div class="new-burst"></div>
+            <img class="fish-art" src="${ASSET(r.img)}" alt="${r.name}">
+            <div class="new-q">？</div>
+            <div class="new-stamp">図鑑<br>NEW!</div>
+          </div>
+          <div class="new-dex-line">📖 図鑑に新登録!  ${dex.caughtSpecies} / ${dex.totalSpecies} 種</div>`
+          : `<img class="fish-art" src="${ASSET(r.img)}" alt="${r.name}">`}
           ${r.isSmall ? '<div class="small-note">…実は小物だった</div>' : ""}
           <div class="fish-name">${r.name}</div>
           <div class="fish-cm">${r.cm} cm</div>

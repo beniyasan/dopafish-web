@@ -11,6 +11,10 @@ const store = {
 };
 
 // 魚図鑑 persistence — name -> [count, maxCm]
+// 図鑑初登録の演出タイミング(秒) — ui/css と揃える
+const REVEAL_NEW_STAMP_AT = 0.9;
+const REVEAL_NEW_LOCK = 1.8;
+
 export const dex = {
   records: store.getJSON("fishDex", {}),
   log(name, cm) {
@@ -41,6 +45,7 @@ export class GameModel {
     this.promptHot = false;
     this.flash = null;              // {color:[r,g,b], opacity}
     this.reveal = null;             // Caught
+    this.revealLockUntil = 0;
     this.chargePower = 0;
     this.tension = 0;
     this.mashCount = 0;
@@ -614,6 +619,7 @@ export class GameModel {
       isSecret = true;
     }
     const cm = randInt(chosen.cm[0], chosen.cm[1]);
+    const isNew = dex.entry(chosen.name).count === 0;
     dex.log(chosen.name, cm);
     let sc = chosen.score;
     if (perfect) sc = Math.floor(sc * 1.5);
@@ -631,8 +637,19 @@ export class GameModel {
     const rushGain = RushRules.gain(r, this.rushActive, this.rushLv);
 
     this.reveal = { name: chosen.name, img: chosen.img, rarity: r, cm, score: sc, medals: medal,
-                    perfect, isRecord, rushGain, isSmall: small, isSecret };
+                    perfect, isRecord, rushGain, isSmall: small, isSecret, isNew };
     this.phase = "reveal";
+    // 図鑑初登録: lock taps so leftover mash taps can't skip the reveal
+    const entryDelay = cardFXSpec(this.reveal).entryDelay;
+    this.revealLockUntil = isNew ? this.now + entryDelay + REVEAL_NEW_LOCK : 0;
+    if (isNew) {
+      this.schedule(entryDelay + REVEAL_NEW_STAMP_AT, () => {
+        if (this.reveal?.name !== chosen.name) return;
+        this.snd.play("impact");
+        this.snd.play("shine");
+        this.haptics.play({ name: "bite" });
+      });
+    }
     this.prompt = "";
     this.fx.setFightLook(false);
     this.fx.setOrbit(0, 0, false);
@@ -671,6 +688,7 @@ export class GameModel {
 
   dismissReveal() {
     if (this.phase !== "reveal" || !this.reveal) return;
+    if (this.now < this.revealLockUntil) return;
     const rushGain = this.reveal.rushGain;
     this.reveal = null;
     if (rushGain > 0) {
