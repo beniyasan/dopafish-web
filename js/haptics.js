@@ -21,12 +21,12 @@ const P = {
   },
   hook: () => [55, 40, 35],
   catchResult: (c) => {
-    const r = c.rarity;
-    if (r === "lr") return [80, 60, 60, 60, 60, 60, 200];
-    if (r === "ur") return [70, 50, 70, 50, 150];
-    if (r === "ssr") return [55, 45, 90];
-    if (r === "sr") return [45, 40, 65];
-    if (r === "r") return [35, 30, 40];
+    const r = c.rarity; // numeric Rarity enum: n0 r1 sr2 ssr3 ur4 lr5
+    if (r === 5) return [80, 60, 60, 60, 60, 60, 200];
+    if (r === 4) return [70, 50, 70, 50, 150];
+    if (r === 3) return [55, 45, 90];
+    if (r === 2) return [45, 40, 65];
+    if (r === 1) return [35, 30, 40];
     return [28];
   },
   rushIn: (c) => c.continued ? [60, 45, 60, 45, 120] : [45, 40, 45, 40, 80],
