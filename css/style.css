@@ -361,3 +361,44 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
 .icon-btn { width: 28px; height: 28px; padding: 10px; box-sizing: content-box;
   background: rgba(0,0,0,.35); border-radius: 50%; font-size: 20px; line-height: 28px;
   text-align: center; color: #fff; }
+
+/* ---------- 図鑑初登録 reveal ---------- */
+/* timeline (after card entry): 0–0.55s silhouette → 0.55–0.8s color pop → 0.9s stamp → 1.8s tap ok.
+   keep in sync with REVEAL_NEW_STAMP_AT / REVEAL_NEW_LOCK in model.js */
+.new-art { position: relative; display: inline-block; width: 100%; max-width: 300px; }
+.is-new .new-art .fish-art { animation: artIn .38s .05s cubic-bezier(.2,1.5,.4,1) both,
+  silToColor .3s calc(var(--entry-delay) + .55s) ease-out both; }
+@keyframes silToColor {
+  0%   { filter: brightness(0) drop-shadow(0 0 6px rgba(0,213,255,.8)); }
+  45%  { filter: brightness(3) drop-shadow(0 0 16px #fff); }
+  100% { filter: none; } }
+.new-q { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 72px; font-weight: 900; color: #00d5ff; text-shadow: 0 0 14px #00d5ff; pointer-events: none;
+  animation: qOut .25s calc(var(--entry-delay) + .5s) ease-in both; }
+@keyframes qOut { from { opacity: 1; transform: scale(1) } to { opacity: 0; transform: scale(2) } }
+.new-burst { position: absolute; left: 50%; top: 50%; width: 80px; height: 80px; margin: -40px;
+  border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, #fff 0%, rgba(255,214,10,.8) 35%, transparent 70%);
+  animation: burstOut .6s calc(var(--entry-delay) + .6s) ease-out both; }
+@keyframes burstOut { 0% { transform: scale(0); opacity: 0 } 15% { opacity: 1 } 100% { transform: scale(5); opacity: 0 } }
+.new-stamp { position: absolute; right: -6px; top: -8px; width: 82px; height: 82px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  font-size: 19px; font-weight: 900; line-height: 1.05; color: #fff;
+  background: radial-gradient(circle at 35% 30%, #ff6b5e, #ff3b30 60%, #c4161c);
+  border: 3px solid #ffd60a; box-shadow: 0 0 18px rgba(255,59,48,.9), 0 0 0 4px rgba(255,214,10,.35);
+  text-shadow: 0 2px 0 rgba(0,0,0,.4); pointer-events: none;
+  animation: stampIn .32s calc(var(--entry-delay) + .9s) cubic-bezier(.3,1.6,.5,1) both,
+             stampGlow 1s calc(var(--entry-delay) + 1.3s) ease-in-out infinite alternate; }
+@keyframes stampIn { from { transform: scale(3.2) rotate(-40deg); opacity: 0 } to { transform: rotate(12deg); opacity: 1 } }
+@keyframes stampGlow { from { box-shadow: 0 0 10px rgba(255,59,48,.6), 0 0 0 4px rgba(255,214,10,.25) }
+                       to   { box-shadow: 0 0 26px rgba(255,59,48,1),  0 0 0 6px rgba(255,214,10,.5) } }
+.new-dex-line { display: inline-block; margin: 2px 0 6px; padding: 5px 14px; border-radius: 999px;
+  font-size: 16px; font-weight: 900; color: #1a1a1a;
+  background: linear-gradient(90deg, #ffd60a, #fff3a0, #ffd60a); background-size: 200% 100%;
+  animation: newLineIn .35s calc(var(--entry-delay) + 1.0s) cubic-bezier(.2,1.5,.4,1) both,
+             newLineShine 1.4s calc(var(--entry-delay) + 1.4s) linear infinite; }
+@keyframes newLineIn { from { transform: translateY(10px) scale(.6); opacity: 0 } to { transform: none; opacity: 1 } }
+@keyframes newLineShine { from { background-position: 200% 0 } to { background-position: 0 0 } }
+.is-new .fish-name { animation: newLineIn .35s calc(var(--entry-delay) + .8s) cubic-bezier(.2,1.5,.4,1) both; }
+.is-new .tap-note { animation: tapNoteIn .3s calc(var(--entry-delay) + 1.8s) ease-out both; }
+@keyframes tapNoteIn { from { opacity: 0 } to { opacity: 1 } }
