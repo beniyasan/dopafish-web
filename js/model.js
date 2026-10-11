@@ -86,6 +86,7 @@ export class GameModel {
     this.autoPower = 0.65;
     this.oldManCue = null;          // {id,line,heat}
     this.bestScore = store.getInt("bestDay"); // 1日のベスト(以前の bestScore は累計だったので引き継がない)
+    if (this.day.prevBest === undefined) this.day.prevBest = this.bestScore; // その日が始まった時点の記録
     this.bestCm = store.getInt("bestCm");
 
     // upgrades
@@ -256,6 +257,8 @@ export class GameModel {
       this.startEnding(this.endingSeen);
       return;
     }
+    // 30投を終えた日のまま再読み込みしたら、追加で投げさせずにリザルトへ
+    if (this.day.cast >= DAY.casts && !this.rushActive) { this.endDay(); return; }
     if (this.autoStart) this.schedule(0.3, () => this.performCast(0.8));
   }
 
@@ -374,7 +377,9 @@ export class GameModel {
 
   makeHold(seq) {
     const g = this.holdRng(seq);
-    const h = { seq, r: g(), rescue: g(), rescueR: g(), u: g(), c1: g(), c2: g(), forced: false };
+    // u: 魚種 / cm: 大きさ / sec, secPick: シークレット抽選 — デイリーでは全部シード由来
+    const h = { seq, r: g(), rescue: g(), rescueR: g(), u: g(), c1: g(), c2: g(),
+                cm: g(), sec: g(), secPick: g(), forced: false };
     this.colorHold(h);
     return h;
   }
@@ -472,7 +477,10 @@ export class GameModel {
   // ---- 1日 ----
   loadDay() {
     const d = store.getJSON("day", null);
-    return d && d.v === 1 ? d : this.freshDay("free");
+    if (!d || d.v !== 1) return this.freshDay("free");
+    // 日付が変わったデイリーは続けない(シード・天気はその日のもの)
+    if (d.mode === "daily" && d.date !== todayKey()) return this.freshDay("free");
+    return d;
   }
 
   freshDay(mode) {
@@ -521,7 +529,7 @@ export class GameModel {
     }
     this.dayResult = { id: Math.random().toString(36).slice(2), mode: this.day.mode, date: this.day.date,
                        score: this.score, rank, stats: st, best: this.bestScore, dailyBest,
-                       isBest: this.score >= this.bestScore && this.score > 0 };
+                       isBest: this.score > (this.day.prevBest ?? 0) };
     this.saveDay();
     this.snd.stopBGM();
     this.snd.play(rank === "S" || rank === "A" ? "fanfare_big" : "fanfare");
@@ -530,6 +538,7 @@ export class GameModel {
   startNewDay(mode) {
     if (this.phase !== "dayEnd" && this.phase !== "idle") return;
     this.day = this.freshDay(mode);
+    this.day.prevBest = this.bestScore;
     this.score = 0;
     this.combo = 0;
     this.dayResult = null;
@@ -1106,11 +1115,13 @@ export class GameModel {
     // シークレットは図鑑コンプ + 金の竿MAX で解禁。さらに魚ごとの時間帯・天気の条件を満たすものだけ
     const secretOpen = dex.isComplete && this.rareLv >= UPGRADE_COSTS.length;
     const eligible = secretFishPool.filter((f) => this.secretConditionMet(f.name));
-    if (this.forceSecret || (secretOpen && eligible.length && Math.random() < SECRET_CHANCE)) {
-      chosen = pick(this.forceSecret ? secretFishPool : eligible);
+    const hr = this.currentHold;
+    if (this.forceSecret || (secretOpen && eligible.length && (hr?.sec ?? Math.random()) < SECRET_CHANCE)) {
+      const pool = this.forceSecret ? secretFishPool : eligible;
+      chosen = pool[Math.floor((hr?.secPick ?? Math.random()) * pool.length)];
       isSecret = true;
     }
-    const cm = randInt(chosen.cm[0], chosen.cm[1]);
+    const cm = hr ? chosen.cm[0] + Math.floor(hr.cm * (chosen.cm[1] - chosen.cm[0] + 1)) : randInt(chosen.cm[0], chosen.cm[1]);
     const isNew = dex.entry(chosen.name).count === 0;
     dex.log(chosen.name, cm);
     let sc = chosen.score;
