@@ -42,3 +42,5 @@ iOSアプリ「Dopagaki Fishing Collection」([beniyasan/dopafish](https://githu
 | `?ending` | 開始時に通常EDを再生 |
 | `?daycast=N` | その日の投数をNにして開始(29で次の1投で1日終了) |
 | `?omen=N` | 海の気配ゲージをNで開始(100で満タン) |
+| `?nushi` | 毎投ヌシに遭遇する |
+| `?gold` | 釣れる魚を必ず金色個体にする |
