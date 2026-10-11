@@ -372,7 +372,7 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
 @keyframes silToColor {
   0%   { filter: brightness(0) drop-shadow(0 0 6px rgba(0,213,255,.8)); }
   45%  { filter: brightness(3) drop-shadow(0 0 16px #fff); }
-  100% { filter: none; } }
+  100% { filter: var(--art-filter, none); } }
 .new-q { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   font-size: 72px; font-weight: 900; color: #00d5ff; text-shadow: 0 0 14px #00d5ff; pointer-events: none;
   animation: qOut .25s calc(var(--entry-delay) + .5s) ease-in both; }
@@ -615,3 +615,36 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
 .de-btn.daily { background: linear-gradient(#af52de, #5e2ca5); color: #fff; }
 .de-copy { margin-top: 10px; font-size: 13px; font-weight: 900; color: rgba(255,255,255,.75);
   padding: 6px 14px; border-radius: 999px; background: rgba(255,255,255,.1); }
+
+/* ---------- ヌシ ---------- */
+.om-cut.nushi { background: linear-gradient(45deg, rgb(20,0,30), rgb(120,0,70)); }
+.om-cut.nushi .om-cut-lines { background: repeating-linear-gradient(-24deg, transparent 0 24px, rgba(255,45,150,1) 24px 26px); }
+.om-cut.nushi .om-cut-tag { background: #ff2d96; color: #fff; }
+.om-cut.nushi .om-cut-edge { background: #ff2d96; box-shadow: 0 0 10px #ff2d96; }
+.om-cut.nushi .om-cut-name { color: #ff8cc6; }
+#hold-fill.nushi { background: linear-gradient(90deg, #ff2d96, #ff3b30); box-shadow: 0 0 8px #ff2d96; transition: width .1s; }
+.esc-bar.nushi > div { background: linear-gradient(90deg, #ff2d96, #ff3b30); }
+.nushi-label { font-size: 20px; font-weight: 900; color: #ff2d96; text-shadow: 0 0 12px #ff2d96;
+  animation: rarityPulse .5s ease-in-out infinite alternate; }
+.dex-sec.nushi-sec { color: #ff2d96; }
+.nushi-badge { margin-left: 6px; font-size: 10px; padding: 1px 6px; border-radius: 999px; background: #ff2d96; color: #fff; }
+.nushi-hp { display: inline-block; width: 60px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.15);
+  overflow: hidden; vertical-align: middle; }
+.nushi-hp i { display: block; height: 100%; background: linear-gradient(90deg, #ff2d96, #ff3b30); }
+
+/* ---------- 個体差 ---------- */
+.gold-label { font-size: 18px; font-weight: 900; margin-top: 2px;
+  background: linear-gradient(90deg, #fff3a0, #ffd60a, #ff9500, #ffd60a, #fff3a0); background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: newLineShine 1.4s linear infinite; }
+.gold-label small, .crown-label small { font-size: 11px; color: #fff; -webkit-text-fill-color: #fff; }
+.crown-label { font-size: 17px; font-weight: 900; color: #ffd60a; text-shadow: 0 0 10px rgba(255,214,10,.7); }
+.fish-art.gold-art { box-shadow: 0 0 22px rgba(255,214,10,.8); }
+.dex-variants { display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800;
+  color: rgba(255,255,255,.7); margin: 2px 0 6px; flex-wrap: wrap; }
+.dex-variants .vb.crown { margin-left: 8px; }
+.dex-vars { display: flex; gap: 3px; }
+.vb { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; font-size: 10px;
+  font-weight: 900; border: 1px dashed rgba(255,255,255,.3); color: rgba(255,255,255,.25); }
+.vb.gold.on { background: linear-gradient(#fff3a0, #ffd60a, #c77800); color: #4a2a00; border: none; }
+.vb.crown.on { background: rgba(255,214,10,.2); border: 1px solid #ffd60a; color: #fff; }
+.vb.crown:not(.on) { filter: grayscale(1); }

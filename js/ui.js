@@ -1,7 +1,7 @@
 // DOM UI — SwiftUI ContentView equivalent. All copy/layout ported 1:1.
 import { Rarity, RARITY_LABEL, RARITY_COLOR, fishPool, secretFishPool,
          OLDMAN_HEAT, UPGRADES, UPGRADE_COSTS, BAIT, BAIT_SHOP, cardFXSpec,
-         HOLD_COLORS, OMEN, DAY, WEATHER, SECRET_COND } from "./data.js";
+         HOLD_COLORS, OMEN, DAY, WEATHER, SECRET_COND, NUSHI_POOL, GOLD_FILTER } from "./data.js";
 import { dex } from "./model.js";
 
 const ASSET = (name) => `assets/${name}.webp`;
@@ -98,7 +98,7 @@ export class UI {
       </div>
 
       <div id="hold-meter" class="hidden">
-        <div class="fight-label">テンション</div>
+        <div class="fight-label" id="hold-label">テンション</div>
         <div class="hold-track"><div id="hold-zone"></div><div class="hold-red"></div><div id="hold-needle"></div></div>
         <div class="fight-bar"><div id="hold-fill"></div></div>
         <div class="fight-row"><span class="fight-cap" id="hold-cap">長押しで緑をキープ</span><span class="fight-remain" id="hold-remain">0.0</span></div>
@@ -230,6 +230,23 @@ export class UI {
         rows += `<div class="dex-secret-note">金の竿を極めし者の前にのみ現れる…</div>`;
       }
     }
+    // ヌシ: 倒したもの / 戦闘中(体力表示) / まだ見ぬもの
+    const ns = this.model.nushiState;
+    rows += `<div class="dex-sec nushi-sec">ヌシ — ${Math.min(ns.idx, NUSHI_POOL.length)}/${NUSHI_POOL.length} 討伐</div>`;
+    NUSHI_POOL.forEach((n, i) => {
+      const beaten = i < ns.idx, current = i === ns.idx;
+      const e = dex.entry(n.name);
+      rows += `<div class="dex-row ${beaten ? "caught" : ""}" style="${beaten ? "border:1px solid #ff2d9673" : ""}">
+        <div class="dex-thumb">${beaten || current
+          ? `<img class="${beaten ? "" : "sil"}" src="${ASSET(n.img)}" style="${beaten ? `filter:${n.filter}` : ""}" alt="">` : "?"}</div>
+        <div class="dex-info">
+          <div class="dex-name">${beaten ? n.name : "？？？"}<span class="nushi-badge">主</span></div>
+          <div class="dex-cm">${beaten ? `最大 ${e.maxCm}cm`
+            : current ? `<span class="nushi-hp"><i style="width:${ns.hp * 100}%"></i></span> 残り体力 ${Math.round(ns.hp * 100)}%`
+            : "まだ姿を見せていない"}</div>
+        </div>
+      </div>`;
+    });
     o.innerHTML = `
       <div class="overlay-bg" data-close></div>
       <div class="overlay-panel dex-panel">
@@ -240,6 +257,10 @@ export class UI {
         <div class="dex-progress">
           <span>捕獲 ${dex.caughtSpecies} / ${dex.totalSpecies} 種</span>
           ${dex.isComplete ? '<span class="complete">🏆 コンプリート!!</span>' : ""}
+        </div>
+        <div class="dex-variants">
+          <span class="vb gold on">金</span> 金色個体 ${dex.goldCount}/${dex.totalSpecies}
+          <span class="vb crown on">👑</span> サイズ王冠 ${dex.crownCount}/${dex.totalSpecies}
         </div>
         ${dex.isComplete ? '<button class="ed-replay" data-replay>🎬 ED再生</button>' : ""}
         <div class="dex-bar"><div style="width:${100 * dex.caughtSpecies / Math.max(1, dex.totalSpecies)}%"></div></div>
@@ -265,6 +286,7 @@ export class UI {
         <div class="dex-name">${caught ? f.name : "？？？"}${secret ? '<span class="secret-badge">幻</span>' : ""}</div>
         <div class="dex-cm">${caught ? `最大 ${e.maxCm}cm` : hint ? `未捕獲・${hint}` : "未捕獲"}</div>
       </div>
+      ${caught && !secret ? `<div class="dex-vars"><span class="vb gold ${e.gold ? "on" : ""}">金</span><span class="vb crown ${e.crown ? "on" : ""}">👑</span></div>` : ""}
       ${caught ? `<div class="dex-count">×${e.count}</div>` : ""}
     </div>`;
   }
@@ -522,7 +544,11 @@ export class UI {
       const nd = $("hold-needle");
       nd.style.left = `${t * 100}%`;
       nd.className = st;
-      $("hold-fill").style.width = `${Math.min(1, m.fightProg) * 100}%`;
+      // ヌシ戦はバーが「残り体力」(減っていく赤)
+      $("hold-fill").style.width = `${(m.nushiFight ? m.nushiState.hp : Math.min(1, m.fightProg)) * 100}%`;
+      $("hold-fill").classList.toggle("nushi", m.nushiFight);
+      const lbl = m.nushiFight ? `ヌシの体力 ${Math.ceil(m.nushiState.hp * 100)}%` : "テンション";
+      if (c.holdLbl !== lbl) { c.holdLbl = lbl; $("hold-label").textContent = lbl; }
       $("hold-remain").textContent = m.mashRemain.toFixed(1);
       if (c.holdSt !== st) {
         c.holdSt = st;
@@ -601,13 +627,13 @@ export class UI {
       } else {
         callout.className = "hidden";
         cutin.className = "show";
-        const premium = cue.heat === "premium";
+        const premium = cue.heat === "premium" || cue.heat === "nushi";
         cutin.innerHTML = `
-          <div class="om-cut ${premium ? "premium" : "hot"}">
+          <div class="om-cut ${cue.heat === "nushi" ? "premium nushi" : premium ? "premium" : "hot"}">
             <div class="om-cut-lines"></div>
             <img class="om-cut-img" src="${ASSET("OldManHot")}" alt="">
             <div class="om-cut-text">
-              <span class="om-cut-tag">${premium ? "伝説の気配" : "大物の予感"}</span>
+              <span class="om-cut-tag">${cue.heat === "nushi" ? "ヌシ出現!!" : premium ? "伝説の気配" : "大物の予感"}</span>
               <div class="om-cut-line">${cue.line}</div>
               <div class="om-cut-name">常連のおじさん</div>
             </div>
@@ -664,6 +690,9 @@ export class UI {
     const spec = cardFXSpec(r);
     const label = RARITY_LABEL[r.rarity];
     const fx = this._cardFX(spec);
+    // 色替え(ヌシ・金色)は初登録のカラー化アニメの終点にも効くよう CSS 変数で渡す
+    const artFilter = r.nushi ? r.nushi.filter : r.gold ? GOLD_FILTER : "none";
+    const artStyle = `--art-filter:${artFilter};filter:${artFilter}`;
 
     o.className = "show";
     o.innerHTML = `
@@ -677,15 +706,19 @@ export class UI {
                  ? "background-image:linear-gradient(90deg,#ff3b30,#ff9500,#ffd60a,#34c759,#007aff,#af52de)"
                  : `color:${spec.accent}`};text-shadow:0 0 16px ${spec.accent}">${label}</div>
           ${r.isSecret ? '<div class="secret-label">✦ シークレット!! ✦</div>' : ""}
+          ${r.nushi ? '<div class="nushi-label">★ ヌシ討伐!!! ★</div>' : ""}
+          ${r.gold ? `<div class="gold-label">✦ 金色個体 ✦${r.newGold ? " <small>図鑑に登録!</small>" : ""}</div>` : ""}
+          ${r.crown ? `<div class="crown-label">👑 サイズ王冠!${r.newCrown ? " <small>図鑑に登録!</small>" : ""}</div>` : ""}
           ${r.isNew ? `
           <div class="new-art">
             <div class="new-burst"></div>
-            <img class="fish-art" src="${ASSET(r.img)}" alt="${r.name}">
+            <img class="fish-art ${r.gold ? "gold-art" : ""}" src="${ASSET(r.img)}" style="${artStyle}" alt="${r.name}">
             <div class="new-q">？</div>
             <div class="new-stamp">図鑑<br>NEW!</div>
           </div>
-          <div class="new-dex-line">📖 図鑑に新登録!  ${dex.caughtSpecies} / ${dex.totalSpecies} 種</div>`
-          : `<img class="fish-art" src="${ASSET(r.img)}" alt="${r.name}">`}
+          <div class="new-dex-line">${r.nushi ? "📖 ヌシを図鑑に登録!" : r.isSecret ? "📖 幻の魚を図鑑に登録!"
+            : `📖 図鑑に新登録!  ${dex.caughtSpecies} / ${dex.totalSpecies} 種`}</div>`
+          : `<img class="fish-art ${r.gold ? "gold-art" : ""}" src="${ASSET(r.img)}" style="${artStyle}" alt="${r.name}">`}
           ${r.isSmall ? '<div class="small-note">…実は小物だった</div>' : ""}
           <div class="fish-name">${r.name}</div>
           <div class="fish-cm">${r.cm} cm</div>
@@ -842,6 +875,15 @@ export class UI {
           <div class="esc-bar"><div style="width:${rep.progress * 100}%"></div></div>
           <div class="esc-taps">${rep.fight === "mash" ? `連打 ${Math.floor(rep.progress * 100)}%・あと${rep.tapsShort}回`
             : `引き寄せ ${Math.floor(rep.progress * 100)}%`}</div>
+        </div>`;
+    } else if (k.type === "nushi") {
+      border = "#ff2d96";
+      silhouette = `<div class="esc-sil"><img src="${ASSET(k.img)}" style="filter:${k.filter}" alt=""></div>`;
+      details = `
+        <div class="esc-details"><span class="esc-rarity" style="background:#ff2d96">ヌシ</span><span class="esc-name">${k.name}</span></div>
+        <div class="esc-progress">
+          <div class="esc-bar nushi"><div style="width:${k.hp * 100}%"></div></div>
+          <div class="esc-taps">残り体力 ${Math.round(k.hp * 100)}%(今回 -${Math.round(k.dealt * 100)}%)</div>
         </div>`;
     } else {
       border = "rgba(153,153,153,.5)";

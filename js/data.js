@@ -49,6 +49,7 @@ export const OLDMAN_HEAT = {
   warm:   { isCutIn: false, duration: 2.8 },
   hot:    { isCutIn: true,  duration: 3.6 },
   premium:{ isCutIn: true,  duration: 3.6 },
+  nushi:  { isCutIn: true,  duration: 3.8 },
 };
 
 export const UPGRADES = [
@@ -242,3 +243,29 @@ export function mulberry32(a) {
 export function todayKey(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+
+// ===== ヌシ(持ち越しバトル) =====
+// 1回では釣り上げられない。ゾーン内の秒数 hpSec でようやく倒せる(1回のファイトは NUSHI.fightSec 秒)
+// 専用の絵はないので既存の絵を暗く大きく色替えして使う
+export const NUSHI_POOL = [
+  { name: "岩礁のヌシ・黒鉄鯛",   img: "FishLegendaryBream", filter: "brightness(.55) saturate(1.5) hue-rotate(200deg) contrast(1.2)",
+    cm: [260, 320],   score: 30000, hpSec: 12, line: "出たな…この岩場のヌシだ!!" },
+  { name: "沖のヌシ・群青大カジキ", img: "FishKajiki",          filter: "brightness(.6) saturate(2) hue-rotate(150deg) contrast(1.2)",
+    cm: [480, 560],   score: 50000, hpSec: 16, line: "あの背ビレ…沖のヌシだ、気を抜くな!!" },
+  { name: "深淵のヌシ・古代鯨",    img: "FishRainbowWhale",    filter: "grayscale(.7) brightness(.5) contrast(1.4)",
+    cm: [1500, 1800], score: 80000, hpSec: 20, line: "海が…持ち上がった!? 深淵のヌシだ!!!" },
+];
+export const NUSHI = {
+  encounter: 0.03,          // 通常時の1投あたりの遭遇率
+  fightSec: 9,              // 1回のファイトの長さ
+  zone: [0.42, 0.66],
+  surge: [0.22, 0.34],
+};
+
+// ===== 図鑑の個体差 =====
+export const VARIANT = {
+  gold: 1 / 40,             // 金色個体の出現率
+  goldScore: 3,             // 金色個体の点数倍率
+  crownTop: 0.05,           // サイズ王冠: 種のサイズ幅の上位5%
+};
+export const GOLD_FILTER = "sepia(1) saturate(4) hue-rotate(-12deg) brightness(1.15)";

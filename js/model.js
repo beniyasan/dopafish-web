@@ -4,6 +4,7 @@ import { Rarity, RARITY_LABEL, RARITY_COLOR, fishPool, secretFishPool, OLD_MAN, 
          cardFXSpec, MASH_NEED, BAIT, BAIT_SHOP, fightTypeFor, HOLD, RHYTHM,
          HOLD_COLORS, HOLD_SIZE, HOLD_COLOR_TABLE, HOLD_CHANGE, OMEN, DAY, WEATHER,
          SECRET_COND, SECRET_CHANCE, seedFromString, mulberry32, todayKey,
+         NUSHI_POOL, NUSHI, VARIANT,
          rand, randInt, pick } from "./data.js";
 
 const LS = window.localStorage;
@@ -21,13 +22,23 @@ const REVEAL_CHOICE_LOCK = 0.5; // 換金/餌の選択 — 連打の残りで誤
 
 export const dex = {
   records: store.getJSON("fishDex", {}),
-  log(name, cm) {
-    const e = this.records[name] || [0, 0];
+  // records: name -> [count, maxCm, gold(0/1), crown(0/1)]。返り値は初めての金色・王冠か
+  log(name, cm, v = {}) {
+    const e = this.records[name] || [0, 0, 0, 0];
+    const newGold = !!v.gold && !e[2], newCrown = !!v.crown && !e[3];
     e[0] += 1; e[1] = Math.max(e[1], cm);
+    if (v.gold) e[2] = 1;
+    if (v.crown) e[3] = 1;
     this.records[name] = e;
     LS.setItem("fishDex", JSON.stringify(this.records));
+    return { newGold, newCrown };
   },
-  entry(name) { const e = this.records[name] || [0, 0]; return { count: e[0], maxCm: e[1] }; },
+  entry(name) {
+    const e = this.records[name] || [0, 0, 0, 0];
+    return { count: e[0], maxCm: e[1], gold: !!e[2], crown: !!e[3] };
+  },
+  get goldCount() { return fishPool.reduce((a, s) => a + s.filter(f => this.entry(f.name).gold).length, 0); },
+  get crownCount() { return fishPool.reduce((a, s) => a + s.filter(f => this.entry(f.name).crown).length, 0); },
   // 通常種のみ(シークレットは totalSpecies に含まないので数えない)
   get caughtSpecies() { return fishPool.reduce((a, s) => a + s.filter(f => this.entry(f.name).count > 0).length, 0); },
   get totalSpecies() { return fishPool.reduce((a, s) => a + s.length, 0); },
@@ -59,6 +70,11 @@ export class GameModel {
     this.currentHold = null;
     this.holdChange = null;         // {id, seq} 保留変化の演出用
     this.omen = store.getInt("omen");
+    // ヌシ: idx 番目と戦闘中、hp は残り体力(0..1)。倒すと次のヌシへ
+    this.nushiState = store.getJSON("nushi", { idx: 0, hp: 1 });
+    this.nushiPending = false;      // この投げでヌシに遭遇
+    this.nushiFight = false;        // ヌシとファイト中
+    this.nushiDealt = 0;            // このファイトで削った量
     this.medals = store.getInt("medals");
     this.combo = 0;
     this.rushLeft = 0;
@@ -127,7 +143,7 @@ export class GameModel {
     this.escapeShownAt = 0;
     this.ambientArmed = false;
 
-    // debug: URL params ?rig=ur ?fast ?go ?win ?secret ?mashneed=0.2 ?rush=10 ?ending ?daycast=29 ?omen=90
+    // debug: URL params ?rig=ur ?fast ?go ?win ?secret ?mashneed=0.2 ?rush=10 ?ending ?daycast=29 ?omen=90 ?nushi ?gold
     const q = new URLSearchParams(location.search);
     this.rig = q.get("rig");
     this.fast = q.has("fast");
@@ -135,6 +151,8 @@ export class GameModel {
     this.autoWin = q.has("win");
     this.forceSecret = q.has("secret");
     this.forceEnding = q.has("ending");
+    this.forceNushi = q.has("nushi");
+    this.forceGold = q.has("gold");
     // ?daycast=29 その日の投数 / ?omen=90 海の気配
     if (q.has("daycast")) { this.day.cast = Math.min(DAY.casts, parseInt(q.get("daycast"), 10) || 0); this.slotIdx = this.slotFor(this.day.cast + 1); }
     if (q.has("omen")) this.omen = Math.min(OMEN.max - 1, parseInt(q.get("omen"), 10) || 0);
@@ -337,6 +355,10 @@ export class GameModel {
     this.phase = "waiting";
     this.biteTimer = this.fast ? 0.3 : rand(1.0, 3.0) - power * 0.4;
     this.rollResult();
+    // ヌシとの遭遇(通常時のみ)
+    this.nushiPending = !!this.nushiDef && !this.rushActive && (!this.rig || this.forceNushi)
+      && (this.forceNushi || Math.random() < NUSHI.encounter);
+    if (this.nushiPending) this.result = Rarity.lr;
     this.scheduleTeasers(this.biteTimer);
     this.schedule(this.biteTimer, () => this.bite());
     if (Math.random() < 0.35 && this.biteTimer > 1.2) {
@@ -352,6 +374,10 @@ export class GameModel {
   // ---- bite & reach ----
   bite() {
     this.pickReach();
+    if (this.nushiPending) {
+      this.reachKind = 4;
+      this.showOldMan(this.nushiDef.line, "nushi");
+    }
     this.fx.bobberDip(1);
     this.snd.play("bite");
     this.haptics.play({ name: "bite" });
@@ -379,7 +405,7 @@ export class GameModel {
     const g = this.holdRng(seq);
     // u: 魚種 / cm: 大きさ / sec, secPick: シークレット抽選 — デイリーでは全部シード由来
     const h = { seq, r: g(), rescue: g(), rescueR: g(), u: g(), c1: g(), c2: g(),
-                cm: g(), sec: g(), secPick: g(), forced: false };
+                cm: g(), sec: g(), secPick: g(), gold: g(), forced: false };
     this.colorHold(h);
     return h;
   }
@@ -736,8 +762,14 @@ export class GameModel {
       this.schedule(7.6, () => { this.prompt = "GO!!"; this.snd.play("countgo"); });
     } else {
       this.enterPremiumLook(true);
-      this.schedule(0.1, () => this.showBanner("!?!?", "この引きは…何だ!?", "rainbow", 1.8));
-      this.schedule(2.0, () => this.showBanner("虹色バトル!!!", "伝説確定!?", "rainbow", 2.4));
+      if (this.nushiPending) {
+        const d = this.nushiDef, hp = Math.round(this.nushiState.hp * 100);
+        this.schedule(0.1, () => this.showBanner("ヌシ出現!!!", d.name, "rainbow", 1.8));
+        this.schedule(2.0, () => this.showBanner(hp < 100 ? "またアイツだ!!" : "まともに釣れる相手じゃない…", `残り体力 ${hp}%`, "rainbow", 2.4));
+      } else {
+        this.schedule(0.1, () => this.showBanner("!?!?", "この引きは…何だ!?", "rainbow", 1.8));
+        this.schedule(2.0, () => this.showBanner("虹色バトル!!!", "伝説確定!?", "rainbow", 2.4));
+      }
       for (let i = 0; i < 8; i++) {
         this.schedule(0.6 + i * 0.75, () => {
           this.fx.sparkleBurst([255, 255, 255]); this.snd.play("heart"); this.haptics.play({ name: "heartbeat", level: 4 });
@@ -883,11 +915,15 @@ export class GameModel {
     this.fightProg = 0;
     this.mashNeed = this.result === null ? 999 : Math.max(1, Math.floor(MASH_NEED[this.result] * this.mashMult * cut));
     this.mashTapsLeft = this.result === null || this.fightType !== "mash" ? null : this.mashNeed;
-    if (this.fightType === "hold") this.setupHold(asRarity, cut);
+    this.nushiFight = this.nushiPending;
+    this.nushiPending = false;
+    if (this.nushiFight) this.fightType = "hold";
+    if (this.nushiFight) this.setupNushi(cut);
+    else if (this.fightType === "hold") this.setupHold(asRarity, cut);
     if (this.fightType === "rhythm") this.setupRhythm(asRarity, cut);
     const intro = {
       mash:   ["連打!!", "連打!!", "画面を連打で引き上げろ!"],
-      hold:   ["", "テンション勝負!!", "長押しで緑ゾーンを保て!"],
+      hold:   this.nushiFight ? ["", "ヌシとの死闘!!", "緑ゾーンで体力を削れ!"] : ["", "テンション勝負!!", "長押しで緑ゾーンを保て!"],
       rhythm: ["", "リズムバトル!!", "円に重なる瞬間にタップ!"],
     }[this.fightType];
     // 長押し・リズムはメーター内に操作説明があるので、下の大きな案内は出さない
@@ -919,6 +955,41 @@ export class GameModel {
     this.mashDur = this.holdNeed * 2 + 1.2 + 0.4 * this.reelLv;
   }
 
+  // ---- ヌシ ----
+  get nushiDef() { return NUSHI_POOL[this.nushiState.idx] ?? null; }
+
+  setupNushi(cut) {
+    this.holdZone = NUSHI.zone;
+    this.holdSurge = NUSHI.surge;
+    this.holdTension = this.holdZone[0] - 0.08;
+    this.holding = false;
+    this.holdOver = 0;
+    this.holdSurgeAt = this.mashT + rand(0.8, 1.3);
+    this.mashDur = NUSHI.fightSec + 0.4 * this.reelLv;
+    // 合わせのノルマ減は与ダメージ増として効く
+    this.nushiDps = 1 / (this.nushiDef.hpSec * cut);
+    this.nushiDealt = 0;
+    this.fightProg = 1 - this.nushiState.hp;
+  }
+
+  saveNushi() { LS.setItem("nushi", JSON.stringify(this.nushiState)); }
+
+  // 逃げられても削った体力は持ち越し
+  nushiEscape(snapped) {
+    if (this.mashDone) return;
+    this.mashDone = true;
+    this.nushiFight = false;
+    const d = this.nushiDef, hp = this.nushiState.hp;
+    this.saveNushi();
+    const report = {
+      id: Math.random().toString(36).slice(2), fight: "nushi", isNearMiss: hp < 0.15, isBigFish: true,
+      kind: { type: "nushi", name: d.name, img: d.img, filter: d.filter, hp, dealt: this.nushiDealt },
+      headline: snapped ? "糸が切れた!!" : "ヌシは深みへ消えた…",
+      subline: `体力を ${Math.round(this.nushiDealt * 100)}% 削った! 残り ${Math.round(hp * 100)}% は次回へ持ち越し`,
+    };
+    this.escape("", report);
+  }
+
   tickHold(dt) {
     if (this.mashDone) return;
     const [lo, hi] = this.holdZone;
@@ -934,6 +1005,18 @@ export class GameModel {
     }
     this.holdTension = Math.max(0, this.holdTension);
     const inZone = this.holdTension >= lo && this.holdTension <= hi;
+    if (this.nushiFight) {
+      if (inZone) {
+        const dmg = Math.min(this.nushiState.hp, dt * this.nushiDps);
+        this.nushiState.hp -= dmg;
+        this.nushiDealt += dmg;
+      }
+      this.fightProg = 1 - this.nushiState.hp;
+      this.mashFill = this.fightProg;
+      if (this.holdTension >= 1) { this.nushiEscape(true); return; }
+      if (this.nushiState.hp <= 0) { this.nushiState.hp = 0; this.resolveCatch(this.hookPerfect || this.holdOver < 0.4); }
+      return;
+    }
     if (inZone) this.fightProg += dt / this.holdNeed;
     else {
       if (this.mashT > 0.8) this.holdOver += dt; // 最初の立ち上がりは見逃す
@@ -1067,6 +1150,7 @@ export class GameModel {
   }
 
   resolveMash() {
+    if (this.nushiFight) { this.nushiEscape(false); return; }
     if (this.fightType !== "mash") {
       // 時間切れ: リズムはノーツを叩き切って足りなければ逃げられる
       if (this.result !== null && this.fightProg >= 1) this.resolveCatch(this.hookPerfect);
@@ -1109,22 +1193,29 @@ export class GameModel {
   // ---- resolve ----
   caught(perfect, small) {
     this.oldManCue = null;
-    const r = this.result ?? Rarity.n;
-    let chosen = this.pickSpecies(fishPool[r], this.currentHold?.u);
+    const nushi = this.nushiFight ? this.nushiDef : null;
+    this.nushiFight = false;
+    const r = nushi ? Rarity.lr : (this.result ?? Rarity.n);
+    let chosen = nushi ?? this.pickSpecies(fishPool[r], this.currentHold?.u);
     let isSecret = false;
     // シークレットは図鑑コンプ + 金の竿MAX で解禁。さらに魚ごとの時間帯・天気の条件を満たすものだけ
     const secretOpen = dex.isComplete && this.rareLv >= UPGRADE_COSTS.length;
     const eligible = secretFishPool.filter((f) => this.secretConditionMet(f.name));
     const hr = this.currentHold;
-    if (this.forceSecret || (secretOpen && eligible.length && (hr?.sec ?? Math.random()) < SECRET_CHANCE)) {
+    if (!nushi && (this.forceSecret || (secretOpen && eligible.length && (hr?.sec ?? Math.random()) < SECRET_CHANCE))) {
       const pool = this.forceSecret ? secretFishPool : eligible;
       chosen = pool[Math.floor((hr?.secPick ?? Math.random()) * pool.length)];
       isSecret = true;
     }
     const cm = hr ? chosen.cm[0] + Math.floor(hr.cm * (chosen.cm[1] - chosen.cm[0] + 1)) : randInt(chosen.cm[0], chosen.cm[1]);
     const isNew = dex.entry(chosen.name).count === 0;
-    dex.log(chosen.name, cm);
+    // 個体差: 金色個体(まれ)・サイズ王冠(種のサイズ幅の上位5%)
+    const gold = !nushi && (this.forceGold || (hr?.gold ?? Math.random()) < VARIANT.gold);
+    const crown = !nushi && cm >= chosen.cm[0] + (1 - VARIANT.crownTop) * (chosen.cm[1] - chosen.cm[0]);
+    const { newGold, newCrown } = dex.log(chosen.name, cm, { gold, crown });
+    if (nushi) { this.nushiState = { idx: this.nushiState.idx + 1, hp: 1 }; this.saveNushi(); }
     let sc = chosen.score;
+    if (gold) sc *= VARIANT.goldScore;
     if (perfect) sc = Math.floor(sc * 1.5);
     if (this.rushActive) sc *= 2;
     sc = Math.floor(sc * (1 + Math.min(0.5, this.combo * 0.08)));
@@ -1132,7 +1223,7 @@ export class GameModel {
     if (isRecord) { this.bestCm = cm; store.set("bestCm", cm); }
     const medal = Math.max(1, Math.floor(sc / 12));
     // N・R は「換金」か「餌にする」かを結果カードで選ぶ。換金するまで点数・メダルは入らない
-    const baitable = !isSecret && r <= Rarity.r;
+    const baitable = !isSecret && !gold && r <= Rarity.r;
     if (!baitable) this.addScore(sc, medal);
     this.combo += 1;
     // 天井: 小物は気配が溜まり、自力の大物で戻る
@@ -1152,7 +1243,8 @@ export class GameModel {
 
     this.reveal = { name: chosen.name, img: chosen.img, rarity: r, cm, score: sc, medals: medal,
                     perfect, isRecord, rushGain, isSmall: small, isSecret, isNew, baitable,
-                    rushMissed: !this.rushActive && r === Rarity.ur && rushGain === 0 };
+                    rushMissed: !this.rushActive && r === Rarity.ur && rushGain === 0,
+                    gold, crown, newGold, newCrown, nushi: nushi ? { filter: nushi.filter } : null };
     this.phase = "reveal";
     // 図鑑初登録: lock taps so leftover mash taps can't skip the reveal
     const entryDelay = cardFXSpec(this.reveal).entryDelay;
