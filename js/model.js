@@ -1,7 +1,7 @@
 // GameModel — faithful JS port of GameModel.swift
 import { Rarity, RARITY_LABEL, RARITY_COLOR, fishPool, secretFishPool, OLD_MAN, OLDMAN_HEAT,
          UPGRADES, UPGRADE_COSTS, RushRules, rushStatus, ESCAPE, makeEscapeReport,
-         cardFXSpec, MASH_NEED, rand, randInt, pick } from "./data.js";
+         cardFXSpec, MASH_NEED, BAIT, BAIT_SHOP, rand, randInt, pick } from "./data.js";
 
 const LS = window.localStorage;
 const store = {
@@ -14,6 +14,7 @@ const store = {
 // 図鑑初登録の演出タイミング(秒) — ui/css と揃える
 const REVEAL_NEW_STAMP_AT = 0.9;
 const REVEAL_NEW_LOCK = 1.8;
+const REVEAL_CHOICE_LOCK = 0.5; // 換金/餌の選択 — 連打の残りで誤選択しないように
 
 export const dex = {
   records: store.getJSON("fishDex", {}),
@@ -59,6 +60,8 @@ export class GameModel {
     this.ending = null;             // {id, start, teaserAt, replay}
     this.endingSeen = store.getInt("endingSeen") > 0;
     this.pendingRushGain = 0;
+    this.bait = store.getJSON("bait", null); // {name, img, grade} 次の1投で使う活き餌
+    this.activeBait = null;                   // この投げで泳がせている餌
     this.revealLockUntil = 0;
     this.chargePower = 0;
     this.tension = 0;
@@ -132,6 +135,27 @@ export class GameModel {
     return true;
   }
   setMedals(v) { this.medals = v; store.set("medals", v); }
+
+  // ---- 活き餌 ----
+  setBait(b) {
+    this.bait = b;
+    if (b) LS.setItem("bait", JSON.stringify(b)); else LS.removeItem("bait");
+  }
+  buyBait(i) {
+    const item = BAIT_SHOP[i];
+    if (!item || this.medals < item.cost) return false;
+    this.medals -= item.cost;
+    store.set("medals", this.medals);
+    this.setBait({ name: item.name, img: item.img, grade: item.grade });
+    this.snd.play("coin");
+    return true;
+  }
+  applyBait(r) {
+    const b = this.activeBait;
+    if (!b) return r;
+    this.activeBait = null;
+    return 1 - (1 - r) * (1 - BAIT[b.grade].power);
+  }
 
   // ---- clock / scheduler ----
   tick(dt) {
@@ -225,6 +249,12 @@ export class GameModel {
     this.phase = "flying";
     this.prompt = "";
     this.chargePower = 0;
+    // 活き餌は通常時のみ使う(RUSH中は温存)
+    if (this.bait && !this.rushActive) {
+      this.activeBait = this.bait;
+      this.setBait(null);
+      this.showBanner(`${this.activeBait.name}を泳がせた!`, BAIT[this.activeBait.grade].effect, "hot", 1.4);
+    }
     this.snd.play("cast");
     this.fx.castLure(power);
     let isLastCast = false;
@@ -292,7 +322,9 @@ export class GameModel {
       return;
     }
     let r = Math.random();
-    r = RushRules.boost(r, this.rareLv);
+    // RUSH中は竿補正なし(RUSH自体が高確率なので、重ねると上乗せが止まらなくなる)
+    if (!this.rushActive) r = RushRules.boost(r, this.rareLv);
+    r = this.applyBait(r);
     this.result = this.rarityForRoll(r);
     this.applyGearLimits();
   }
@@ -729,21 +761,21 @@ export class GameModel {
     sc = Math.floor(sc * (1 + Math.min(0.5, this.combo * 0.08)));
     const isRecord = cm > this.bestCm;
     if (isRecord) { this.bestCm = cm; store.set("bestCm", cm); }
-    this.score += sc;
-    if (this.score > this.bestScore) { this.bestScore = this.score; store.set("bestScore", this.score); }
     const medal = Math.max(1, Math.floor(sc / 12));
-    this.medals += medal;
-    store.set("medals", this.medals);
+    // N・R は「換金」か「餌にする」かを結果カードで選ぶ。換金するまで点数・メダルは入らない
+    const baitable = !isSecret && r <= Rarity.r;
+    if (!baitable) this.addScore(sc, medal);
     this.combo += 1;
 
     const rushGain = RushRules.gain(r, this.rushActive, this.rushLv);
 
     this.reveal = { name: chosen.name, img: chosen.img, rarity: r, cm, score: sc, medals: medal,
-                    perfect, isRecord, rushGain, isSmall: small, isSecret, isNew };
+                    perfect, isRecord, rushGain, isSmall: small, isSecret, isNew, baitable };
     this.phase = "reveal";
     // 図鑑初登録: lock taps so leftover mash taps can't skip the reveal
     const entryDelay = cardFXSpec(this.reveal).entryDelay;
-    this.revealLockUntil = isNew ? this.now + entryDelay + REVEAL_NEW_LOCK : 0;
+    this.revealLockUntil = isNew ? this.now + entryDelay + REVEAL_NEW_LOCK
+                         : baitable ? this.now + REVEAL_CHOICE_LOCK : 0;
     if (isNew) {
       this.schedule(entryDelay + REVEAL_NEW_STAMP_AT, () => {
         if (this.reveal?.name !== chosen.name) return;
@@ -782,17 +814,36 @@ export class GameModel {
     } else {
       this.snd.play("deny");
       this.snd.play("coin");
-      this.showBanner("…小物だった", `+${sc}pt`, "miss", 1.6);
+      this.showBanner("…小物だった", baitable ? "換金か、餌にして大物を狙うか" : `+${sc}pt`, "miss", 1.6);
       this.fx.coinRain(Math.min(12, medal));
     }
     this.schedule(0.5, () => this.fx.splashFX(true));
   }
 
-  dismissReveal() {
+  addScore(sc, medal) {
+    this.score += sc;
+    if (this.score > this.bestScore) { this.bestScore = this.score; store.set("bestScore", this.score); }
+    this.medals += medal;
+    store.set("medals", this.medals);
+  }
+
+  // choice: "cash"(換金・既定) | "bait"(餌にする) — N・R のみ意味を持つ
+  dismissReveal(choice = "cash") {
     if (this.phase !== "reveal" || !this.reveal) return;
     if (this.now < this.revealLockUntil) return;
-    const rushGain = this.reveal.rushGain;
+    const rv = this.reveal;
+    const rushGain = rv.rushGain;
     this.reveal = null;
+    if (rv.baitable) {
+      if (choice === "bait") {
+        this.setBait({ name: `${rv.name}の活き餌`, img: rv.img, grade: rv.rarity });
+        this.snd.play("splash");
+        this.showBanner("活き餌ゲット!", this.rushActive ? "RUSH後の1投で使う" : "次の1投で大物を狙え", "info", 1.4);
+      } else {
+        this.addScore(rv.score, rv.medals);
+        this.snd.play("coin");
+      }
+    }
     // 最後の1種を釣ったらRUSHより先にEDを流す
     if (dex.isComplete && !this.endingSeen) {
       this.pendingRushGain = rushGain;
