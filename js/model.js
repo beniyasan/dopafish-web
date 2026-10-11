@@ -24,7 +24,8 @@ export const dex = {
     LS.setItem("fishDex", JSON.stringify(this.records));
   },
   entry(name) { const e = this.records[name] || [0, 0]; return { count: e[0], maxCm: e[1] }; },
-  get caughtSpecies() { return Object.keys(this.records).length; },
+  // 通常種のみ(シークレットは totalSpecies に含まないので数えない)
+  get caughtSpecies() { return fishPool.reduce((a, s) => a + s.filter(f => this.entry(f.name).count > 0).length, 0); },
   get totalSpecies() { return fishPool.reduce((a, s) => a + s.length, 0); },
   get caughtSecrets() { return secretFishPool.filter(f => this.entry(f.name).count > 0).length; },
   // シークレット以外を全種捕獲済み
