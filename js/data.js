@@ -71,9 +71,9 @@ export const BAIT_SHOP = [
 
 // MARK: RushRules — RUSH 確率・回転ルール (RushStatus.swift)
 export const RushRules = {
-  missThreshold: 0.18,
-  bonusThreshold: 0.66,   // RUSH中の SR/SSR 境界
-  extendThreshold: 0.82,  // RUSH中の UR 以上(上乗せ対象)
+  missThreshold: 0.15,
+  rushTable: { n: 0.33, r: 0.50, sr: 0.70, ur: 0.97 }, // RUSH中の各レア度の上限(累積)
+  extendThreshold: 0.90,  // RUSH中の UR 以上(上乗せ対象) = 10%
   warningSpins: 3,
   endingDuration: 2.4,
   rodBiasPerLevel: 0.08,
@@ -84,20 +84,20 @@ export const RushRules = {
   reelBoost(roll, reelLevel) { return 1 - (1 - roll) * (1 - this.reelBiasPerLevel * reelLevel); },
   reelRescueProbability(reelLevel) { return this.reelRescuePerLevel * reelLevel; },
   rarityCap(rareLevel) { return [Rarity.sr, Rarity.ssr, Rarity.ur, Rarity.lr, Rarity.lr, Rarity.lr][Math.min(rareLevel, 5)]; },
-  // 突入: UR 10 / LR 15 (+RUSH券Lv)。RUSH中の上乗せは UR +3 / LR +5 のみ。
+  // 突入: UR 7 / LR 10 (+RUSH券Lv)。RUSH中の上乗せは UR +2 / LR +4 のみ。
   // 上乗せの期待値を1回転未満に抑えないとRUSHが終わらなくなる(以前は竿Lv2以上でほぼ無限)
-  gain(rarity, active, rushLevel) {
-    if (active) return rarity === Rarity.lr ? 5 : rarity === Rarity.ur ? 3 : 0;
-    const spins = rarity === Rarity.lr ? 15 : rarity === Rarity.ur ? 10 : 0;
-    return spins > 0 ? spins + rushLevel : 0;
+  // 通常時の突入は LR 確定 / UR は 1/4 の突入抽選(全UR突入だと再突入が早すぎて大半の時間がRUSHになる)
+  urEntryChance: 1 / 4,
+  gain(rarity, active, rushLevel, roll = Math.random()) {
+    if (active) return rarity === Rarity.lr ? 4 : rarity === Rarity.ur ? 2 : 0;
+    if (rarity === Rarity.lr) return 10 + rushLevel;
+    if (rarity === Rarity.ur && roll < this.urEntryChance) return 7 + rushLevel;
+    return 0;
   },
-  // RUSH中は竿の大物補正をかけない(model.rollResult)ので、素の UR 以上率 + リール救済分
-  bonusProbability(rareLevel, reelLevel) {
+  // RUSH中は竿補正・リール救済・合わせのUR昇格がかからないので、素の UR 以上率そのもの
+  bonusProbability(rareLevel) {
     if (this.rarityCap(rareLevel) < Rarity.ur) return 0;
-    const direct = 1 - this.extendThreshold;
-    const rescuedBonus = Math.min(1, (1 - this.extendThreshold)
-      / ((1 - this.missThreshold) * (1 - this.reelBiasPerLevel * reelLevel)));
-    return Math.min(1, direct + this.missThreshold * this.reelRescueProbability(reelLevel) * rescuedBonus);
+    return 1 - this.extendThreshold;
   },
 };
 

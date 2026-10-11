@@ -510,3 +510,4 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
 .shop-sec { font-size: 15px; font-weight: 900; color: #00d5ff; margin: 14px 0 6px; }
 .shop-sec small { font-size: 10px; color: rgba(255,255,255,.5); margin-left: 4px; }
 .bait-img { width: 40px; height: 28px; object-fit: cover; border-radius: 6px; }
+.rush-missed { font-size: 13px; font-weight: 900; color: rgba(255,255,255,.55); }

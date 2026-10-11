@@ -585,6 +585,7 @@ export class UI {
           <div class="tap-note">${this.model.bait ? `※餌にすると今の${this.model.bait.name}と交換` : "カードをタップでも換金"}</div>`
           : `<div class="fish-pt">+${r.score} pt   🪙+${r.medals}</div>
           ${r.rushGain > 0 ? `<div class="rush-gain">RUSH +${r.rushGain} 回転!!</div>` : ""}
+          ${r.rushMissed ? `<div class="rush-missed">RUSH突入ならず…(UR突入率 1/4)</div>` : ""}
           <div class="tap-note">タップで続く</div>`}
         </div>
       </div>`;
