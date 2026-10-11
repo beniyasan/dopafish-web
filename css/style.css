@@ -60,6 +60,7 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
 #prompt { position: absolute; left: 0; right: 0; bottom: 120px; text-align: center;
   font-size: 17px; font-weight: 900; color: #fff; text-shadow: 0 0 6px rgba(0,0,0,.6);
   pointer-events: none; transition: opacity .15s; }
+#prompt.above-cast { bottom: 196px; }
 #prompt.hot { font-size: 30px; color: #ffd60a; animation: promptPulse .5s ease-in-out infinite alternate; }
 @keyframes promptPulse { from { transform: scale(1) } to { transform: scale(1.08) } }
 

@@ -329,14 +329,16 @@ export class UI {
       c.prompt = m.prompt; c.promptHot = m.promptHot;
       const p = $("prompt");
       p.textContent = m.prompt;
-      p.className = m.promptHot ? "hot" : "";
+      p.classList.toggle("hot", !!m.promptHot);
       p.style.opacity = m.prompt ? 1 : 0;
     }
 
     // phase-driven widgets
     if (c.phase !== m.phase) {
       c.phase = m.phase;
-      $("cast-zone").classList.toggle("hidden", !(m.phase === "idle" || m.phase === "charging"));
+      const casting = m.phase === "idle" || m.phase === "charging";
+      $("cast-zone").classList.toggle("hidden", !casting);
+      $("prompt").classList.toggle("above-cast", casting); // CASTボタンと重ならないよう上へ
       $("battle-gauge").classList.toggle("hidden", m.phase !== "reach");
       $("hook-gauge").classList.toggle("hidden", m.phase !== "reach");
       if (m.phase !== "reach") $("hook-cue").className = "hidden";
