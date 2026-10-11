@@ -511,3 +511,36 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
 .shop-sec small { font-size: 10px; color: rgba(255,255,255,.5); margin-left: 4px; }
 .bait-img { width: 40px; height: 28px; object-fit: cover; border-radius: 6px; }
 .rush-missed { font-size: 13px; font-weight: 900; color: rgba(255,255,255,.55); }
+
+/* ---------- ファイト: 長押し / リズム ---------- */
+#hold-meter, #rhythm-meter { position: absolute; left: 0; right: 0; bottom: 120px; display: flex;
+  flex-direction: column; align-items: center; gap: 10px; pointer-events: none; }
+.fight-label { font-size: 13px; font-weight: 900; color: rgba(255,255,255,.8); }
+.hold-track { position: relative; width: 300px; height: 30px; border-radius: 999px;
+  background: rgba(0,0,0,.35); border: 2px solid rgba(255,255,255,.35); overflow: hidden; }
+#hold-zone { position: absolute; top: 0; bottom: 0; background: rgba(52,199,89,.55);
+  box-shadow: inset 0 0 10px rgba(52,199,89,.9); }
+.hold-red { position: absolute; top: 0; bottom: 0; right: 0; width: 10%;
+  background: repeating-linear-gradient(45deg, rgba(255,59,48,.7) 0 6px, rgba(255,59,48,.35) 6px 12px); }
+#hold-needle { position: absolute; top: -2px; bottom: -2px; width: 6px; margin-left: -3px; border-radius: 3px;
+  background: #fff; box-shadow: 0 0 8px #fff; }
+#hold-needle.ok { background: #34c759; box-shadow: 0 0 10px #34c759; }
+#hold-needle.over { background: #ff3b30; box-shadow: 0 0 12px #ff3b30; }
+.fight-bar { width: 300px; height: 16px; border-radius: 999px; background: rgba(255,255,255,.2); overflow: hidden; }
+#hold-fill, #rhythm-fill { height: 100%; width: 0; border-radius: 999px;
+  background: linear-gradient(90deg, #00d5ff, #ffd60a, #ff9500); }
+.fight-row { display: flex; align-items: baseline; gap: 10px; }
+.fight-cap { font-size: 20px; font-weight: 900; color: #ffd60a; text-shadow: 0 0 8px rgba(0,0,0,.6); }
+.fight-cap.ok { color: #34c759; }
+.fight-cap.over { color: #ff3b30; animation: promptPulse .25s ease-in-out infinite alternate; }
+.fight-remain { font-size: 18px; font-weight: 900; color: rgba(255,255,255,.8); font-variant-numeric: tabular-nums; }
+.rhythm-lane { position: relative; width: 360px; height: 64px; border-radius: 32px; overflow: hidden;
+  background: rgba(0,0,0,.4); border: 2px solid rgba(255,214,10,.5); }
+.rhythm-hit { position: absolute; left: 36px; top: 50%; width: 52px; height: 52px; margin: -26px;
+  border-radius: 50%; border: 4px solid #fff; box-shadow: 0 0 12px #fff, inset 0 0 8px rgba(255,255,255,.6); }
+#rhythm-notes i { position: absolute; left: 0; top: 50%; width: 40px; height: 40px; margin: -20px;
+  border-radius: 50%; opacity: 0;
+  background: radial-gradient(circle at 35% 30%, #fff, #ffd60a 45%, #ff9500); box-shadow: 0 0 10px #ffd60a; }
+#rhythm-notes i.on { opacity: 1; }
+#rhythm-notes i.great, #rhythm-notes i.good { opacity: 0; transition: opacity .15s; }
+#rhythm-notes i.miss { opacity: .35; filter: grayscale(1); }
