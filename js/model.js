@@ -983,7 +983,7 @@ export class GameModel {
     this.saveNushi();
     const report = {
       id: Math.random().toString(36).slice(2), fight: "nushi", isNearMiss: hp < 0.15, isBigFish: true,
-      kind: { type: "nushi", name: d.name, img: d.img, filter: d.filter, hp, dealt: this.nushiDealt },
+      kind: { type: "nushi", name: d.name, img: d.img, hp, dealt: this.nushiDealt },
       headline: snapped ? "糸が切れた!!" : "ヌシは深みへ消えた…",
       subline: `体力を ${Math.round(this.nushiDealt * 100)}% 削った! 残り ${Math.round(hp * 100)}% は次回へ持ち越し`,
     };
@@ -1244,7 +1244,7 @@ export class GameModel {
     this.reveal = { name: chosen.name, img: chosen.img, rarity: r, cm, score: sc, medals: medal,
                     perfect, isRecord, rushGain, isSmall: small, isSecret, isNew, baitable,
                     rushMissed: !this.rushActive && r === Rarity.ur && rushGain === 0,
-                    gold, crown, newGold, newCrown, nushi: nushi ? { filter: nushi.filter } : null };
+                    gold, crown, newGold, newCrown, nushi: !!nushi };
     this.phase = "reveal";
     // 図鑑初登録: lock taps so leftover mash taps can't skip the reveal
     const entryDelay = cardFXSpec(this.reveal).entryDelay;
