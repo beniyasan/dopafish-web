@@ -20,6 +20,7 @@ const REVEAL_NEW_STAMP_AT = 0.9;
 const REVEAL_NEW_LOCK = 1.8;
 const REVEAL_CHOICE_LOCK = 0.5; // 換金/餌の選択 — 連打の残りで誤選択しないように
 const REACH_STAGE_SEC = 2.2;    // 発展前の各段階の長さ(秒)
+const REACH_DEVELOP_DELAY = 1.3; // 発展バナーの後、最終段階の台本を始めるまでの間(秒)
 // 連続予告: 保留ができた時点の結果ごとの発生率(ハズレ・小物はガセ)
 const RENZOKU_CHANCE = { miss: 0.025, [Rarity.n]: 0.025, [Rarity.r]: 0.03, [Rarity.sr]: 0.05, [Rarity.ssr]: 0.14, [Rarity.ur]: 0.4, [Rarity.lr]: 0.7 };
 
@@ -404,6 +405,7 @@ export class GameModel {
 
   // ---- bite & reach ----
   bite() {
+    this.renzokuStep = 0; // 連続予告(海の色)は待ち時間だけ。アタリが来たら戻す
     this.pickReach();
     if (this.nushiPending) {
       this.reachKind = 4;
@@ -785,7 +787,8 @@ export class GameModel {
     // 発展: 最終段階より低い段階から始めて、途中で段階を上げていく(パチンコのリーチ発展)
     const path = this.reachPath(k);
     const pre = (path.length - 1) * REACH_STAGE_SEC;
-    const dur = pre + [2.4, 4.2, 6.2, 8.2, 9.6][k];
+    // 発展した場合は最終段階の台本が REACH_DEVELOP_DELAY 遅れて始まるので、その分も伸ばす
+    const dur = pre + (path.length > 1 ? REACH_DEVELOP_DELAY : 0) + [2.4, 4.2, 6.2, 8.2, 9.6][k];
     const lunges = [1, 2, 4, 6, 7][k] + (path.length - 1);
     this.hookLunges = lunges;
     for (let i = 0; i < lunges; i++) {
@@ -835,10 +838,10 @@ export class GameModel {
     if (!final) {
       // 発展前の段階: 短い台本だけ
       const lines = ["", "引いてる…!", "大物の影だ!!", "折れそうだ…!!"];
-      this.schedule(developed ? 1.3 : 0.1, () => { if (this.phase === "reach") this.showBanner(lines[k], "", k >= 2 ? "hot" : "info", 1.0); });
+      this.schedule(developed ? REACH_DEVELOP_DELAY : 0.1, () => { if (this.phase === "reach") this.showBanner(lines[k], "", k >= 2 ? "hot" : "info", 1.0); });
       return;
     }
-    const d0 = developed ? 1.3 : 0; // 発展バナーの後に台本を始める
+    const d0 = developed ? REACH_DEVELOP_DELAY : 0; // 発展バナーの後に台本を始める
     const at = (t, f) => this.schedule(d0 + t, () => { if (this.phase === "reach") f(); });
     if (k === 0) {
       at(0, () => this.showBanner("食いついた!", "", "info", 1.2));
