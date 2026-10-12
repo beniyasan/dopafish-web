@@ -122,7 +122,7 @@ export class UI {
       <div id="shop-overlay" class="hidden"></div>
       <div id="title" class="hidden">
         <div class="title-inner">
-          <div class="title-main">DOPAGAKI</div>
+          <div class="title-main">DOPA</div>
           <div class="title-sub">Fishing Collection</div>
           <div class="title-note">大当たりでRUSH突入!<br>音量・脳汁注意</div>
           <div class="title-tap">TAP TO START</div>
@@ -802,7 +802,7 @@ export class UI {
   _dayShareText(d) {
     const st = d.stats;
     const fish = RARITY_LABEL.map((l, r) => st.byR[r] ? `${l}×${st.byR[r]}` : "").filter(Boolean).join(" ");
-    return `🎣 DOPAGAKI ${d.mode === "daily" ? `デイリー ${d.date}` : "1日の釣果"}\n`
+    return `🎣 DOPA FISHING ${d.mode === "daily" ? `デイリー ${d.date}` : "1日の釣果"}\n`
       + `ランク${d.rank} ${d.score.toLocaleString()}pt\n${fish}${st.secrets ? ` 幻×${st.secrets}` : ""}\n`
       + (st.best ? `今日の一匹: ${st.best.name} ${st.best.cm}cm` : "");
   }

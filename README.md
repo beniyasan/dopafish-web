@@ -1,4 +1,4 @@
-# DOPAGAKI Fishing Collection — Web版
+# DOPA Fishing Collection — Web版
 
 iOSアプリ「Dopagaki Fishing Collection」([beniyasan/dopafish](https://github.com/beniyasan/dopafish)) をもとにしたブラウザ版です。
 アプリ版を移植したあと、Web版だけの機能(ファイト3種・保留/天井・1日30投・ヌシ・金色個体など)を追加しているため、**現在の抽選・スコア・演出はアプリ版と同じではありません**。
