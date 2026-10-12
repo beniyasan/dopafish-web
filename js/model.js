@@ -511,6 +511,7 @@ export class GameModel {
 
   freshDay(mode) {
     const date = todayKey();
+    // シード文字列は旧名のまま(変えるとデイリーの海が変わり、過去の結果と比べられなくなる)
     const seed = mode === "daily" ? seedFromString(`dopagaki-${date}`) : (Math.random() * 2 ** 32) >>> 0;
     const g = mulberry32(seed ^ 0x9e3779b9);
     const keys = Object.keys(WEATHER), total = keys.reduce((a, k) => a + WEATHER[k].weight, 0);
