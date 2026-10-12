@@ -737,3 +737,13 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
 .om-cut.secret .om-cut-lines { background: repeating-linear-gradient(-24deg, transparent 0 24px, rgba(175,82,222,1) 24px 26px); }
 .om-cut.secret .om-cut-tag { background: linear-gradient(90deg, #af52de, #00d5ff); color: #fff; }
 .om-cut.secret .om-cut-edge { background: #af52de; box-shadow: 0 0 10px #af52de; }
+
+/* ---------- 連続予告: 海面ステージ ---------- */
+#sea-stage { position: absolute; left: 0; right: 0; top: 400px; bottom: 0; pointer-events: none; opacity: 0;
+  transition: opacity 1.2s, background 1.2s; }
+#sea-stage.s1 { opacity: 1; background: linear-gradient(rgba(0,80,120,.0), rgba(0,90,140,.28)); }
+#sea-stage.s2 { opacity: 1; background: linear-gradient(rgba(40,0,80,.15), rgba(60,0,110,.42));
+  animation: seaPulse 1.6s ease-in-out infinite alternate; }
+#sea-stage.s3 { opacity: 1; background: linear-gradient(rgba(120,0,40,.25), rgba(160,0,60,.55));
+  animation: seaPulse .8s ease-in-out infinite alternate; }
+@keyframes seaPulse { from { filter: brightness(.85) } to { filter: brightness(1.25) } }
