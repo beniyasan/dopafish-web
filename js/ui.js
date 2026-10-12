@@ -29,6 +29,7 @@ export class UI {
 
     root.insertAdjacentHTML("beforeend", `
       <div id="tod-tint"></div>
+      <div id="sea-stage"></div>
       <div id="fog-layer" class="hidden"></div>
       <div id="vignette" class="hidden"></div>
       <div id="vignette-hot" class="hidden"></div>
@@ -408,6 +409,9 @@ export class UI {
       $("omen-fill").style.width = `${100 * m.omen / OMEN.max}%`;
       $("omen-fill").classList.toggle("hot", m.omen >= OMEN.max * 0.75);
     }
+    // 連続予告: 段階ごとに海が暗く荒れていく
+    if (c.rz !== m.renzokuStep) { c.rz = m.renzokuStep; $("sea-stage").className = m.renzokuStep ? `s${m.renzokuStep}` : ""; }
+
     // 保留
     const showHolds = ["idle", "charging", "flying", "waiting"].includes(m.phase);
     const holdKey = showHolds ? m.holds.map((h) => `${h.seq}:${h.color}`).join(",") : "";
