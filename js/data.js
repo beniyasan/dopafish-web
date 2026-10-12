@@ -50,6 +50,7 @@ export const OLDMAN_HEAT = {
   hot:    { isCutIn: true,  duration: 3.6 },
   premium:{ isCutIn: true,  duration: 3.6 },
   nushi:  { isCutIn: true,  duration: 3.8 },
+  secret: { isCutIn: true,  duration: 3.8 },
 };
 
 export const UPGRADES = [
@@ -129,13 +130,14 @@ export function makeEscapeReport(kind, mashCount, mashNeed, fight = "mash") {
   r.isBigFish = kind.type === "lineBreak" && kind.rarity >= Rarity.sr;
   const pct = Math.floor(r.progress * 100);
   r.headline = kind.type === "bluff" ? "影だけだった…"
+             : kind.secret ? "幻の魚だった…!!"
              : kind.snapped ? "糸が切れた!!"
              : r.isNearMiss ? (fight === "mash" ? `あと${r.tapsShort}回だった!!` : "あと少しだった!!") : "バラした…";
   r.subline = kind.type === "bluff" ? "魚の姿はなかった"
              : kind.snapped ? "テンションを上げすぎた…"
              : r.isNearMiss ? "惜しい!! 逃げられた…"
              : fight === "mash" ? `あと${r.tapsShort}回足りなかった` : `引き寄せ ${pct}% で逃げられた`;
-  r.displayName = kind.type === "bluff" ? "？？？" : (kind.discovered ? kind.fishName : "？？？");
+  r.displayName = kind.type === "bluff" ? "？？？" : kind.secret && !kind.discovered ? "幻の魚" : (kind.discovered ? kind.fishName : "？？？");
   r.isUndiscovered = kind.type === "lineBreak" && !kind.discovered;
   return r;
 }
@@ -158,8 +160,9 @@ export function cardFXSpec(caught) {
 export const MASH_NEED = [8, 10, 14, 18, 22, 28]; // taps required per rarity (n..lr)
 
 // ファイトの種類: N・R は連打 / SR・SSR はテンションを保つ長押し / UR・LR はリズム
+// LR とシークレットは osu! 風(画面内のランダムな位置を叩く・なぞる・回す)
 export function fightTypeFor(rarity) {
-  return rarity >= Rarity.ur ? "rhythm" : rarity >= Rarity.sr ? "hold" : "mash";
+  return rarity >= Rarity.lr ? "osu" : rarity >= Rarity.ur ? "rhythm" : rarity >= Rarity.sr ? "hold" : "mash";
 }
 // 長押し: 押すとテンション上昇・離すと下降。緑ゾーン内の時間だけ引き寄せが進む。1.0で糸切れ
 export const HOLD = {
@@ -170,11 +173,31 @@ export const HOLD = {
   surge: { [Rarity.sr]: [0.14, 0.24], [Rarity.ssr]: [0.18, 0.3] }, // 魚の暴れ(テンション急上昇)
 };
 // リズム: 一定拍でノーツが流れてくる。判定窓は ±秒
+// UR のリズム。間隔は一定ではなく gaps(拍の倍率)からランダムに選ぶ
 export const RHYTHM = {
-  interval: { [Rarity.ur]: 0.5, [Rarity.lr]: 0.43 },
-  notes: { [Rarity.ur]: 12, [Rarity.lr]: 16 },
-  need: { [Rarity.ur]: 8, [Rarity.lr]: 11 },            // GREAT=1 / GOOD=0.6 の合計
+  beat: 0.5,
+  gaps: [1, 1, 0.5, 0.5, 1.5, 2, 0.75],
+  minGap: 0.25,                                         // 最短の間隔(秒)
+  notes: 12,
+  need: 8,                                              // GREAT=1 / GOOD=0.6 の合計
   leadIn: 1.0, great: 0.10, good: 0.20, strayPenalty: 0.3,
+};
+
+// osu! 風ファイト(LR・シークレット)。座標はステージ(390x844)上
+export const OSU = {
+  field: { x0: 70, x1: 320, y0: 190, y1: 600 },        // 出現範囲(HUD・ボタン・メーターを避ける)
+  radius: 34,                                           // 円の半径
+  hitSlop: 14,                                          // 当たり判定の上乗せ
+  approach: 0.9,                                        // 円が見えてから叩くまでの秒数
+  jump: [70, 170],                                      // 前の円からの距離
+  great: 0.10, good: 0.20, strayPenalty: 0.3,
+  follow: 64,                                           // スライダーのボールをこの距離内で追えていればOK
+  levels: {
+    lr:     { beat: 0.55, circles: 10, sliders: 3, sliderLen: [1.0, 1.3], spin: 2.6, spinTurns: 3 },
+    secret: { beat: 0.46, circles: 14, sliders: 5, sliderLen: [0.9, 1.2], spin: 2.8, spinTurns: 4 },
+  },
+  // 得点: 円 GREAT 1 / GOOD 0.6、スライダー 始点0.5 + 追従1.0、スピナー 2.0。合計の need 割合でクリア
+  need: 0.7,
 };
 
 export function rand(a = 0, b = 1) { return a + Math.random() * (b - a); }

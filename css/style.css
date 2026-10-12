@@ -702,3 +702,38 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
   75% { transform: translate(-4px, 2px) } 85% { transform: translate(4px, -2px) } 100% { transform: none } }
 @keyframes nushiStamp { from { transform: scale(2.6) rotate(-30deg); opacity: 0 } to { transform: rotate(-14deg); opacity: 1 } }
 
+
+/* ---------- osu! 風ファイト ---------- */
+#osu-layer { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+#osu-layer.hidden, #osu-meter.hidden { display: none; }
+#osu-svg { position: absolute; left: 0; top: 0; }
+#osu-svg path { fill: none; stroke: rgba(255,255,255,.28); stroke-width: 58; stroke-linecap: round; }
+#osu-svg path.dead { stroke: rgba(120,120,120,.18); }
+.osu-c { position: absolute; margin: 0; transform: translate(-50%, -50%); border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, #ff2d96 45%, #8a0a52);
+  border: 3px solid #fff; box-shadow: 0 0 12px rgba(255,45,150,.9);
+  display: grid; place-items: center; font-size: 22px; font-weight: 900; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+.osu-c.slider { background: radial-gradient(circle at 35% 30%, #fff, #00d5ff 45%, #005a8a); box-shadow: 0 0 12px rgba(0,213,255,.9); }
+.osu-c b { position: relative; z-index: 1; }
+.osu-ap { position: absolute; inset: -4px; border-radius: 50%; border: 3px solid rgba(255,255,255,.9); pointer-events: none; }
+.osu-c.great, .osu-c.good { animation: osuHit .25s ease-out forwards; }
+.osu-c.miss { filter: grayscale(1); opacity: .4; }
+@keyframes osuHit { to { transform: translate(-50%, -50%) scale(1.6); opacity: 0 } }
+.osu-tail { position: absolute; width: 22px; height: 22px; margin: -11px; border-radius: 50%;
+  border: 3px solid rgba(255,255,255,.7); }
+.osu-ball { position: absolute; left: 0; top: 0; width: 44px; height: 44px; margin: -22px; border-radius: 50%;
+  background: radial-gradient(circle, #fff, #ffd60a 60%, transparent 70%); border: 3px solid rgba(255,214,10,.6); }
+.osu-ball.on { box-shadow: 0 0 22px #ffd60a; border-color: #fff; }
+.osu-spin { position: absolute; width: 220px; height: 220px; margin: -110px; border-radius: 50%;
+  border: 4px solid rgba(255,255,255,.7); display: grid; place-items: center; }
+.osu-spin span { position: relative; font-size: 24px; font-weight: 900; color: #fff; text-shadow: 0 0 10px #ff2d96; }
+.spin-meter { position: absolute; inset: 20px; border-radius: 50%; opacity: .55;
+  -webkit-mask: radial-gradient(circle, transparent 55%, #000 56%); mask: radial-gradient(circle, transparent 55%, #000 56%); }
+.osu-spin.clear { border-color: #ffd60a; box-shadow: 0 0 30px #ffd60a; }
+#osu-meter { position: absolute; left: 0; right: 0; bottom: 120px; display: flex; flex-direction: column;
+  align-items: center; gap: 10px; pointer-events: none; }
+#osu-fill { height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg, #ff2d96, #ffd60a); }
+.om-cut.secret { background: linear-gradient(45deg, rgb(10,0,30), rgb(70,20,120)); }
+.om-cut.secret .om-cut-lines { background: repeating-linear-gradient(-24deg, transparent 0 24px, rgba(175,82,222,1) 24px 26px); }
+.om-cut.secret .om-cut-tag { background: linear-gradient(90deg, #af52de, #00d5ff); color: #fff; }
+.om-cut.secret .om-cut-edge { background: #af52de; box-shadow: 0 0 10px #af52de; }

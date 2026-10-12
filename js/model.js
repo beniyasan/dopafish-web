@@ -4,7 +4,7 @@ import { Rarity, RARITY_LABEL, RARITY_COLOR, fishPool, secretFishPool, OLD_MAN, 
          cardFXSpec, MASH_NEED, BAIT, BAIT_SHOP, fightTypeFor, HOLD, RHYTHM,
          HOLD_COLORS, HOLD_SIZE, HOLD_COLOR_TABLE, HOLD_CHANGE, OMEN, DAY, WEATHER,
          SECRET_COND, SECRET_CHANCE, seedFromString, mulberry32, todayKey,
-         NUSHI_POOL, NUSHI, VARIANT,
+         NUSHI_POOL, NUSHI, VARIANT, OSU,
          rand, randInt, pick } from "./data.js";
 
 const LS = window.localStorage;
@@ -75,6 +75,16 @@ export class GameModel {
     this.nushiPending = false;      // この投げでヌシに遭遇
     this.nushiFight = false;        // ヌシとファイト中
     this.nushiDealt = 0;            // このファイトで削った量
+    // シークレット: 投げた時点で決め、専用の予告と osu! 風の高難度ファイトにする
+    this.secretPending = null;      // この投げのシークレット魚
+    this.secretFight = false;
+    this.secretFish = null;
+    // osu! 風ファイト
+    this.osuObjs = [];
+    this.osuPtr = { down: false, x: 0, y: 0 };
+    this.osuScore = 0;
+    this.osuNeed = 1;
+    this.osuAllGreat = true;
     this.medals = store.getInt("medals");
     this.combo = 0;
     this.rushLeft = 0;
@@ -223,6 +233,7 @@ export class GameModel {
         this.mashRemain = Math.max(0, this.mashDur - this.mashT);
         if (this.fightType === "hold") this.tickHold(dt);
         else if (this.fightType === "rhythm") this.tickRhythm();
+        else if (this.fightType === "osu") this.tickOsu(dt);
         else if (this.autoWin) this.onMashTap();
         if (this.phase === "mash" && !this.mashDone && this.mashRemain <= 0) this.resolveMash();
         break;
@@ -359,6 +370,17 @@ export class GameModel {
     this.nushiPending = !!this.nushiDef && !this.rushActive && (!this.rig || this.forceNushi)
       && (this.forceNushi || Math.random() < NUSHI.encounter);
     if (this.nushiPending) this.result = Rarity.lr;
+    // シークレットは図鑑コンプ + 金の竿MAX で解禁。さらに魚ごとの時間帯・天気の条件を満たすものだけ
+    this.secretPending = null;
+    const hr = this.currentHold;
+    const secretOpen = dex.isComplete && this.rareLv >= UPGRADE_COSTS.length;
+    const eligible = secretFishPool.filter((f) => this.secretConditionMet(f.name));
+    if (!this.nushiPending && (!this.rig || this.forceSecret) && (this.forceSecret
+        || (secretOpen && eligible.length && this.result !== null && (hr?.sec ?? Math.random()) < SECRET_CHANCE))) {
+      const pool = this.forceSecret ? secretFishPool : eligible;
+      this.secretPending = pool[Math.floor((hr?.secPick ?? Math.random()) * pool.length)];
+      this.result = Rarity.lr;
+    }
     this.scheduleTeasers(this.biteTimer);
     this.schedule(this.biteTimer, () => this.bite());
     if (Math.random() < 0.35 && this.biteTimer > 1.2) {
@@ -377,6 +399,9 @@ export class GameModel {
     if (this.nushiPending) {
       this.reachKind = 4;
       this.showOldMan(this.nushiDef.line, "nushi");
+    } else if (this.secretPending) {
+      this.reachKind = 4;
+      this.showOldMan(pick(["…この気配、ただの魚じゃねえ", "50年通って一度も見たことのない影だ…!!", "まさか…幻の…!?"]), "secret");
     }
     this.fx.bobberDip(1);
     this.snd.play("bite");
@@ -763,7 +788,10 @@ export class GameModel {
       this.schedule(7.6, () => { this.prompt = "GO!!"; this.snd.play("countgo"); });
     } else {
       this.enterPremiumLook(true);
-      if (this.nushiPending) {
+      if (this.secretPending) {
+        this.schedule(0.1, () => this.showBanner("!?!?!?", "見たことのない影が…", "rainbow", 1.8));
+        this.schedule(2.0, () => this.showBanner("幻の魚の気配!!!", "図鑑に載っていない何かがいる", "rainbow", 2.4));
+      } else if (this.nushiPending) {
         const d = this.nushiDef, hp = Math.round(this.nushiState.hp * 100);
         this.schedule(0.1, () => this.showBanner("ヌシ出現!!!", d.name, "rainbow", 1.8));
         this.schedule(2.0, () => this.showBanner(hp < 100 ? "またアイツだ!!" : "まともに釣れる相手じゃない…", `残り体力 ${hp}%`, "rainbow", 2.4));
@@ -918,14 +946,20 @@ export class GameModel {
     this.mashTapsLeft = this.result === null || this.fightType !== "mash" ? null : this.mashNeed;
     this.nushiFight = this.nushiPending;
     this.nushiPending = false;
+    this.secretFight = !!this.secretPending;
+    this.secretFish = this.secretPending;
+    this.secretPending = null;
+    if (this.secretFight) this.fightType = "osu";
     if (this.nushiFight) this.fightType = "hold";
     if (this.nushiFight) this.setupNushi(cut);
     else if (this.fightType === "hold") this.setupHold(asRarity, cut);
     if (this.fightType === "rhythm") this.setupRhythm(asRarity, cut);
+    if (this.fightType === "osu") this.setupOsu(this.secretFight ? "secret" : "lr", cut);
     const intro = {
       mash:   ["連打!!", "連打!!", "画面を連打で引き上げろ!"],
       hold:   this.nushiFight ? ["", "ヌシとの死闘!!", "緑ゾーンで体力を削れ!"] : ["", "テンション勝負!!", "長押しで緑ゾーンを保て!"],
       rhythm: ["", "リズムバトル!!", "円に重なる瞬間にタップ!"],
+      osu:    ["", this.secretFight ? "幻との死闘!!!" : "伝説バトル!!!", "円を叩け・なぞれ・回せ!"],
     }[this.fightType];
     // 長押し・リズムはメーター内に操作説明があるので、下の大きな案内は出さない
     this.prompt = this.fightType === "mash" ? intro[0] : "";
@@ -1033,14 +1067,185 @@ export class GameModel {
 
   // ---- リズム(UR・LR) ----
   setupRhythm(r, cut) {
-    const iv = RHYTHM.interval[r], n = RHYTHM.notes[r];
-    this.rhythmNotes = Array.from({ length: n }, (_, i) =>
-      ({ id: i, t: this.now + RHYTHM.leadIn + i * iv, judged: null }));
-    this.rhythmNeed = Math.max(1, RHYTHM.need[r] * this.mashMult * cut);
+    // 間隔を拍の倍率からランダムに選ぶ(一定間隔だと単調なので)
+    let t = this.now + RHYTHM.leadIn;
+    this.rhythmNotes = [];
+    for (let i = 0; i < RHYTHM.notes; i++) {
+      this.rhythmNotes.push({ id: i, t, judged: null });
+      t += Math.max(RHYTHM.minGap, RHYTHM.beat * pick(RHYTHM.gaps));
+    }
+    this.rhythmNeed = Math.max(1, RHYTHM.need * this.mashMult * cut);
     this.rhythmScore = 0;
     this.rhythmAllGreat = true;
     this.rhythmBeat = 0;
-    this.mashDur = RHYTHM.leadIn + n * iv + 0.4;
+    this.mashDur = this.rhythmNotes.at(-1).t - this.now + RHYTHM.good + 0.4;
+  }
+
+  // ---- osu! 風(LR・シークレット) ----
+  // 円(タップ)・スライダー(押したままボールを追う)・最後にスピナー(ぐるぐる回す)
+  setupOsu(levelKey, cut) {
+    const L = OSU.levels[levelKey], F = OSU.field;
+    const inField = (p) => p.x >= F.x0 && p.x <= F.x1 && p.y >= F.y0 && p.y <= F.y1;
+    let prev = { x: 195, y: 400 };
+    const near = (from, dmin, dmax) => {
+      for (let k = 0; k < 30; k++) {
+        const a = rand(0, Math.PI * 2), d = rand(dmin, dmax);
+        const p = { x: from.x + Math.cos(a) * d, y: from.y + Math.sin(a) * d };
+        if (inField(p)) return p;
+      }
+      return { x: rand(F.x0, F.x1), y: rand(F.y0, F.y1) };
+    };
+    const kinds = [...Array(L.circles).fill("c"), ...Array(L.sliders).fill("s")];
+    for (let i = kinds.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [kinds[i], kinds[j]] = [kinds[j], kinds[i]]; }
+    if (kinds[0] === "s") { const k = kinds.indexOf("c"); [kinds[0], kinds[k]] = [kinds[k], kinds[0]]; }
+    const objs = [];
+    let t = this.now + RHYTHM.leadIn + 0.2, num = 1;
+    for (const k of kinds) {
+      const p = near(prev, OSU.jump[0], OSU.jump[1]);
+      if (k === "c") {
+        objs.push({ id: objs.length, type: "circle", t, x: p.x, y: p.y, num: num++, judged: null });
+        prev = p;
+        t += Math.max(0.3, L.beat * pick([1, 1, 1, 0.5, 1.5]));
+      } else {
+        const len = rand(L.sliderLen[0], L.sliderLen[1]);
+        const p2 = near(p, 120, 170);
+        // 曲がったスライダー: 中点から垂直方向にずらした制御点
+        const mx = (p.x + p2.x) / 2, my = (p.y + p2.y) / 2, dx = p2.x - p.x, dy = p2.y - p.y, dl = Math.hypot(dx, dy) || 1;
+        const bend = rand(-50, 50);
+        objs.push({ id: objs.length, type: "slider", t, t2: t + len, x: p.x, y: p.y, x2: p2.x, y2: p2.y,
+                    cx: mx - dy / dl * bend, cy: my + dx / dl * bend, num: num++, head: null, follow: 0, done: false });
+        prev = p2;
+        t += len + L.beat;
+      }
+    }
+    t += L.beat * 0.5;
+    objs.push({ id: objs.length, type: "spinner", t, t2: t + L.spin, x: 195, y: 395, turns: 0, need: L.spinTurns, last: null, done: false });
+    this.osuObjs = objs;
+    this.osuPtr = { down: false, x: 0, y: 0 };
+    this.osuScore = 0;
+    const max = L.circles + L.sliders * 1.5 + 2;
+    this.osuNeed = Math.max(1, max * OSU.need * this.mashMult * cut);
+    this.osuAllGreat = true;
+    this.mashDur = objs.at(-1).t2 - this.now + 0.4;
+  }
+
+  sliderPos(o, f) {
+    const u = 1 - Math.max(0, Math.min(1, f));
+    const v = 1 - u;
+    return { x: u * u * o.x + 2 * u * v * o.cx + v * v * o.x2, y: u * u * o.y + 2 * u * v * o.cy + v * v * o.y2 };
+  }
+
+  osuJudge(d) {
+    const ad = Math.abs(d);
+    return ad <= OSU.great ? "great" : ad <= OSU.good ? "good" : "miss";
+  }
+
+  osuHit(o, kind) {
+    if (kind !== "great") this.osuAllGreat = false;
+    if (o.type === "circle") { o.judged = kind; this.osuScore += kind === "great" ? 1 : kind === "good" ? 0.6 : 0; }
+    else { o.head = kind; this.osuScore += kind === "great" ? 0.5 : kind === "good" ? 0.3 : 0; }
+    this.fightPop(kind === "great" ? "GREAT!!" : kind === "good" ? "GOOD!" : "MISS", kind === "miss" ? "early" : kind);
+    if (kind !== "miss") {
+      this.snd.play("reel");
+      this.fx.bobberDip(0.6); this.fx.shockwave(kind === "great");
+      this.haptics.play({ name: "mashTap", progress: this.fightProg, closing: false });
+    }
+    this.syncOsuProg();
+  }
+
+  syncOsuProg() {
+    this.fightProg = this.osuScore / this.osuNeed;
+    this.mashFill = Math.min(1, this.fightProg);
+  }
+
+  // 画面(ステージ座標)を押した
+  osuDown(x, y) {
+    if (this.phase !== "mash" || this.fightType !== "osu" || this.mashDone) return;
+    this.osuPtr = { down: true, x, y };
+    const R = OSU.radius + OSU.hitSlop, win = OSU.good + 0.05;
+    let target = null;
+    for (const o of this.osuObjs) {
+      const open = o.type === "circle" ? !o.judged : o.type === "slider" ? o.head === null : false;
+      if (!open || Math.abs(this.now - o.t) > win) continue;
+      if (Math.hypot(x - o.x, y - o.y) > R) continue;
+      if (!target || o.t < target.t) target = o;
+    }
+    if (target) { this.osuHit(target, this.osuJudge(this.now - target.t)); return; }
+    const sp = this.osuObjs.find((o) => o.type === "spinner" && this.now >= o.t && this.now <= o.t2);
+    if (sp) { sp.last = Math.atan2(y - sp.y, x - sp.x); return; }
+    // 何もないところを叩いた・早押し: 減点
+    this.osuScore = Math.max(0, this.osuScore - OSU.strayPenalty);
+    this.osuAllGreat = false;
+    this.fightPop("ミス", "early");
+    this.syncOsuProg();
+  }
+
+  osuMove(x, y) {
+    if (!this.osuPtr.down) return;
+    this.osuPtr.x = x; this.osuPtr.y = y;
+    const sp = this.osuObjs.find((o) => o.type === "spinner" && this.now >= o.t && this.now <= o.t2);
+    if (sp) {
+      const a = Math.atan2(y - sp.y, x - sp.x);
+      if (sp.last !== null) {
+        let da = a - sp.last;
+        if (da > Math.PI) da -= Math.PI * 2;
+        if (da < -Math.PI) da += Math.PI * 2;
+        sp.turns += Math.abs(da) / (Math.PI * 2);
+      }
+      sp.last = a;
+    }
+  }
+
+  osuUp() {
+    this.osuPtr.down = false;
+    for (const o of this.osuObjs) if (o.type === "spinner") o.last = null;
+  }
+
+  tickOsu(dt) {
+    if (this.mashDone) return;
+    const now = this.now;
+    for (const o of this.osuObjs) {
+      if (o.type === "circle") {
+        if (!o.judged && this.autoWin && now >= o.t) this.osuHit(o, "great");
+        if (!o.judged && now > o.t + OSU.good) this.osuHit(o, "miss");
+      } else if (o.type === "slider") {
+        if (o.head === null && this.autoWin && now >= o.t) this.osuHit(o, "great");
+        if (o.head === null && now > o.t + OSU.good) this.osuHit(o, "miss");
+        if (o.head && o.head !== "miss" && now >= o.t && now <= o.t2) {
+          const b = this.sliderPos(o, (now - o.t) / (o.t2 - o.t));
+          if (this.autoWin) this.osuPtr = { down: true, x: b.x, y: b.y };
+          if (this.osuPtr.down && Math.hypot(this.osuPtr.x - b.x, this.osuPtr.y - b.y) <= OSU.follow) {
+            o.follow += dt;
+            if (Math.random() < dt * 8) this.snd.play("tick");
+          }
+        }
+        if (!o.done && now > o.t2) {
+          o.done = true;
+          let ratio = o.head === "miss" ? 0 : o.follow / (o.t2 - o.t);
+          if (ratio >= 0.8) ratio = 1;
+          this.osuScore += ratio;
+          if (ratio < 1) this.osuAllGreat = false;
+          this.fightPop(ratio >= 1 ? "SLIDER!!" : ratio >= 0.5 ? "GOOD!" : "MISS", ratio >= 1 ? "great" : ratio >= 0.5 ? "good" : "early");
+          if (ratio > 0) { this.snd.play("hook"); this.fx.splashFX(true); }
+          if (this.autoWin) this.osuPtr.down = false;
+          this.syncOsuProg();
+        }
+      } else if (o.type === "spinner") {
+        if (now >= o.t && now <= o.t2) {
+          if (this.autoWin) o.turns += dt * o.need / (o.t2 - o.t) * 1.3;
+          if (Math.random() < dt * 6 && o.turns > 0) this.snd.play("reel");
+        }
+        if (!o.done && now > o.t2) {
+          o.done = true;
+          const frac = Math.min(1, o.turns / o.need);
+          this.osuScore += 2 * frac;
+          if (frac < 1) this.osuAllGreat = false;
+          this.fightPop(frac >= 1 ? "SPIN CLEAR!!" : `${Math.floor(frac * 100)}%`, frac >= 1 ? "great" : frac >= 0.5 ? "good" : "early");
+          if (frac >= 1) { this.snd.play("perfect"); this.fx.shake(6); }
+          this.syncOsuProg();
+        }
+      }
+    }
   }
 
   tickRhythm() {
@@ -1104,9 +1309,11 @@ export class GameModel {
       this.escape("", makeEscapeReport({ type: "bluff" }, 0, 0));
       return;
     }
-    const fish = pick(fishPool[this.result]);
+    const secret = this.secretFight;
+    const fish = secret ? this.secretFish : pick(fishPool[this.result]);
+    this.secretFight = false;
     this.escape("", makeEscapeReport(
-      { type: "lineBreak", rarity: this.result, fishName: fish.name, img: fish.img, snapped,
+      { type: "lineBreak", rarity: this.result, fishName: fish.name, img: fish.img, snapped, secret,
         cm: randInt(fish.cm[0], fish.cm[1]), discovered: dex.entry(fish.name).count > 0 },
       prog, 100, this.fightType));
   }
@@ -1120,6 +1327,7 @@ export class GameModel {
       case "mash":
         if (this.fightType === "hold") this.pressScreen();
         else if (this.fightType === "rhythm") this.rhythmTap();
+        else if (this.fightType === "osu") { /* 位置が要るので osuDown(x, y) で受ける */ }
         else this.onMashTap();
         break;
       case "reach": this.hookTap(); break;
@@ -1154,7 +1362,7 @@ export class GameModel {
     if (this.nushiFight) { this.nushiEscape(false); return; }
     if (this.fightType !== "mash") {
       // 時間切れ: リズムはノーツを叩き切って足りなければ逃げられる
-      if (this.result !== null && this.fightProg >= 1) this.resolveCatch(this.hookPerfect);
+      if (this.result !== null && this.fightProg >= 1) this.resolveCatch(this.hookPerfect || (this.fightType === "osu" && this.osuAllGreat));
       else this.fightFail(false);
       return;
     }
@@ -1184,7 +1392,7 @@ export class GameModel {
     this.fx.shockwave(true);
     this.holding = false;
     if (perfect) {
-      this.showBanner({ mash: "激連打 PERFECT!!", hold: "完璧な駆け引き PERFECT!!", rhythm: "フルコンボ PERFECT!!" }[this.fightType], "", "gold", 1.0);
+      this.showBanner({ mash: "激連打 PERFECT!!", hold: "完璧な駆け引き PERFECT!!", rhythm: "フルコンボ PERFECT!!", osu: "フルコンボ PERFECT!!" }[this.fightType], "", "gold", 1.0);
       this.snd.play("perfect");
     }
     const r = this.result ?? Rarity.n;
@@ -1199,15 +1407,10 @@ export class GameModel {
     const r = nushi ? Rarity.lr : (this.result ?? Rarity.n);
     let chosen = nushi ?? this.pickSpecies(fishPool[r], this.currentHold?.u);
     let isSecret = false;
-    // シークレットは図鑑コンプ + 金の竿MAX で解禁。さらに魚ごとの時間帯・天気の条件を満たすものだけ
-    const secretOpen = dex.isComplete && this.rareLv >= UPGRADE_COSTS.length;
-    const eligible = secretFishPool.filter((f) => this.secretConditionMet(f.name));
     const hr = this.currentHold;
-    if (!nushi && (this.forceSecret || (secretOpen && eligible.length && (hr?.sec ?? Math.random()) < SECRET_CHANCE))) {
-      const pool = this.forceSecret ? secretFishPool : eligible;
-      chosen = pool[Math.floor((hr?.secPick ?? Math.random()) * pool.length)];
-      isSecret = true;
-    }
+    // シークレットは投げた時点で決まっている(land)
+    if (!nushi && this.secretFight) { chosen = this.secretFish; isSecret = true; }
+    this.secretFight = false;
     const cm = hr ? chosen.cm[0] + Math.floor(hr.cm * (chosen.cm[1] - chosen.cm[0] + 1)) : randInt(chosen.cm[0], chosen.cm[1]);
     const isNew = dex.entry(chosen.name).count === 0;
     // 個体差: 金色個体(まれ)・サイズ王冠(種のサイズ幅の上位5%)

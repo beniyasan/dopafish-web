@@ -1,7 +1,7 @@
 // DOM UI — SwiftUI ContentView equivalent. All copy/layout ported 1:1.
 import { Rarity, RARITY_LABEL, RARITY_COLOR, fishPool, secretFishPool,
          OLDMAN_HEAT, UPGRADES, UPGRADE_COSTS, BAIT, BAIT_SHOP, cardFXSpec,
-         HOLD_COLORS, OMEN, DAY, WEATHER, SECRET_COND, NUSHI_POOL, GOLD_FILTER } from "./data.js";
+         HOLD_COLORS, OMEN, DAY, WEATHER, SECRET_COND, NUSHI_POOL, GOLD_FILTER, OSU } from "./data.js";
 import { dex } from "./model.js";
 
 const ASSET = (name) => `assets/${name}.webp`;
@@ -104,6 +104,12 @@ export class UI {
         <div class="fight-row"><span class="fight-cap" id="hold-cap">長押しで緑をキープ</span><span class="fight-remain" id="hold-remain">0.0</span></div>
       </div>
 
+      <div id="osu-layer" class="hidden"><svg id="osu-svg" width="390" height="844"></svg><div id="osu-objs"></div></div>
+      <div id="osu-meter" class="hidden">
+        <div class="fight-bar"><div id="osu-fill"></div></div>
+        <div class="fight-row"><span class="fight-cap" id="osu-cap">円を叩け!</span><span class="fight-remain" id="osu-remain">0.0</span></div>
+      </div>
+
       <div id="rhythm-meter" class="hidden">
         <div class="rhythm-lane"><div class="rhythm-hit"></div><div id="rhythm-notes"></div></div>
         <div class="fight-bar"><div id="rhythm-fill"></div></div>
@@ -187,9 +193,8 @@ export class UI {
           e.target.closest("#title") || e.target.closest("#reveal") ||
           e.target.closest("#escape-card") || e.target.closest("#rush-end") ||
           e.target.closest("#ending") || e.target.closest("#day-end")) return;
-      const r = document.getElementById("app").getBoundingClientRect();
-      const x = (e.clientX - r.left) * 390 / r.width;
-      const y = (e.clientY - r.top) * 844 / r.height;
+      const { x, y } = this._stagePos(e);
+      if (m.phase === "mash" && m.fightType === "osu") { m.osuDown(x, y); return; }
       if (m.phase === "mash") {
         const w = this.scene.screenToWorld(x, y);
         this.scene.tapRipple(w.x, w.y);
@@ -198,11 +203,20 @@ export class UI {
     });
 
     // 長押しファイト: どこで離しても解除
-    const up = () => m.releaseScreen();
+    const up = () => { m.releaseScreen(); m.osuUp(); };
     addEventListener("pointerup", up);
     addEventListener("pointercancel", up);
+    // osu! のスライダー・スピナーは指の動きを追う
+    document.getElementById("app").addEventListener("pointermove", (e) => {
+      if (m.phase === "mash" && m.fightType === "osu") { const p = this._stagePos(e); m.osuMove(p.x, p.y); }
+    });
 
     this._syncIcons();
+  }
+
+  _stagePos(e) {
+    const r = document.getElementById("app").getBoundingClientRect();
+    return { x: (e.clientX - r.left) * 390 / r.width, y: (e.clientY - r.top) * 844 / r.height };
   }
 
   _syncIcons() {
@@ -471,6 +485,9 @@ export class UI {
       $("mash-meter").classList.toggle("hidden", fightKey !== "mash");
       $("hold-meter").classList.toggle("hidden", fightKey !== "hold");
       $("rhythm-meter").classList.toggle("hidden", fightKey !== "rhythm");
+      $("osu-layer").classList.toggle("hidden", fightKey !== "osu");
+      $("osu-meter").classList.toggle("hidden", fightKey !== "osu");
+      if (fightKey === "osu") this._buildOsu();
       if (fightKey === "hold") {
         const [lo, hi] = m.holdZone;
         Object.assign($("hold-zone").style, { left: `${lo * 100}%`, width: `${(hi - lo) * 100}%` });
@@ -569,6 +586,8 @@ export class UI {
       $("rhythm-remain").textContent = m.mashRemain.toFixed(1);
     }
 
+    if (fightKey === "osu") this._updateOsu();
+
     // mash meter
     if (fightKey === "mash") {
       $("mash-fill").style.width = `${Math.max(0, Math.min(1, m.mashFill)) * 100}%`;
@@ -627,13 +646,13 @@ export class UI {
       } else {
         callout.className = "hidden";
         cutin.className = "show";
-        const premium = cue.heat === "premium" || cue.heat === "nushi";
+        const premium = cue.heat === "premium" || cue.heat === "nushi" || cue.heat === "secret";
         cutin.innerHTML = `
-          <div class="om-cut ${cue.heat === "nushi" ? "premium nushi" : premium ? "premium" : "hot"}">
+          <div class="om-cut ${cue.heat === "nushi" || cue.heat === "secret" ? `premium ${cue.heat}` : premium ? "premium" : "hot"}">
             <div class="om-cut-lines"></div>
             <img class="om-cut-img" src="${ASSET("OldManHot")}" alt="">
             <div class="om-cut-text">
-              <span class="om-cut-tag">${cue.heat === "nushi" ? "ヌシ出現!!" : premium ? "伝説の気配" : "大物の予感"}</span>
+              <span class="om-cut-tag">${cue.heat === "nushi" ? "ヌシ出現!!" : cue.heat === "secret" ? "幻の気配" : premium ? "伝説の気配" : "大物の予感"}</span>
               <div class="om-cut-line">${cue.line}</div>
               <div class="om-cut-name">常連のおじさん</div>
             </div>
@@ -765,6 +784,74 @@ export class UI {
     return `${rays}${sparkles}${rings}
       ${spec.entryFlash ? '<div class="entry-flash"></div>' : ""}
       ${spec.entryShine ? `<div class="shine" style="animation-duration:${spec.shinePeriod || 0.001}s"></div>` : ""}`;
+  }
+
+  // ---------- osu! 風ファイト ----------
+
+  _buildOsu() {
+    const m = this.model, R = OSU.radius;
+    const svg = this.$("osu-svg"), box = this.$("osu-objs");
+    svg.innerHTML = m.osuObjs.filter((o) => o.type === "slider").map((o) =>
+      `<path data-o="${o.id}" d="M${o.x},${o.y} Q${o.cx},${o.cy} ${o.x2},${o.y2}" />`).join("");
+    box.innerHTML = m.osuObjs.map((o) => {
+      if (o.type === "circle") {
+        return `<div class="osu-c" data-o="${o.id}" style="left:${o.x}px;top:${o.y}px;width:${R * 2}px;height:${R * 2}px">
+          <b>${o.num}</b><i class="osu-ap"></i></div>`;
+      }
+      if (o.type === "slider") {
+        return `<div class="osu-c slider" data-o="${o.id}" style="left:${o.x}px;top:${o.y}px;width:${R * 2}px;height:${R * 2}px">
+          <b>${o.num}</b><i class="osu-ap"></i></div>
+          <div class="osu-tail" data-tail="${o.id}" style="left:${o.x2}px;top:${o.y2}px"></div>
+          <div class="osu-ball" data-ball="${o.id}"></div>`;
+      }
+      return `<div class="osu-spin" data-o="${o.id}" style="left:${o.x}px;top:${o.y}px">
+        <div class="spin-meter" data-meter="${o.id}"></div><span>回せ!!</span></div>`;
+    }).join("");
+  }
+
+  _updateOsu() {
+    const m = this.model, now = m.now, svg = this.$("osu-svg"), box = this.$("osu-objs");
+    let cap = "円を叩け!";
+    for (const o of m.osuObjs) {
+      const end = o.t2 ?? o.t;
+      const visible = now >= o.t - OSU.approach && now <= end + 0.25;
+      const el = box.querySelector(`[data-o="${o.id}"]`);
+      if (o.type === "circle" || o.type === "slider") {
+        const judged = o.type === "circle" ? o.judged : o.head;
+        el.style.display = visible && (!judged || now <= o.t + 0.25) ? "" : "none";
+        el.className = `osu-c ${o.type === "slider" ? "slider" : ""} ${judged ?? ""}`;
+        const ap = el.querySelector(".osu-ap");
+        ap.style.transform = `scale(${1 + 2.2 * Math.max(0, (o.t - now) / OSU.approach)})`;
+        ap.style.opacity = judged ? 0 : 1;
+      }
+      if (o.type === "slider") {
+        const path = svg.querySelector(`[data-o="${o.id}"]`);
+        path.style.display = visible ? "" : "none";
+        path.classList.toggle("dead", o.head === "miss");
+        box.querySelector(`[data-tail="${o.id}"]`).style.display = visible ? "" : "none";
+        const ball = box.querySelector(`[data-ball="${o.id}"]`);
+        const active = now >= o.t && now <= o.t2 && o.head && o.head !== "miss";
+        ball.style.display = active ? "" : "none";
+        if (active) {
+          const b = m.sliderPos(o, (now - o.t) / (o.t2 - o.t));
+          ball.style.transform = `translate(${b.x}px, ${b.y}px)`;
+          const following = m.osuPtr.down && Math.hypot(m.osuPtr.x - b.x, m.osuPtr.y - b.y) <= OSU.follow;
+          ball.classList.toggle("on", following);
+          cap = following ? "そのまま追え!" : "ボールを指で追え!";
+        }
+      }
+      if (o.type === "spinner") {
+        el.style.display = visible ? "" : "none";
+        const frac = Math.min(1, o.turns / o.need);
+        box.querySelector(`[data-meter="${o.id}"]`).style.background =
+          `conic-gradient(#ffd60a ${frac * 360}deg, rgba(255,255,255,.12) 0)`;
+        el.classList.toggle("clear", frac >= 1);
+        if (now >= o.t && now <= o.t2) cap = frac >= 1 ? "CLEAR!!" : "ぐるぐる回せ!!";
+      }
+    }
+    this.$("osu-fill").style.width = `${Math.min(1, m.fightProg) * 100}%`;
+    this.$("osu-remain").textContent = m.mashRemain.toFixed(1);
+    if (this._c.osuCap !== cap) { this._c.osuCap = cap; this.$("osu-cap").textContent = cap; }
   }
 
   // ---------- 1日のリザルト ----------
