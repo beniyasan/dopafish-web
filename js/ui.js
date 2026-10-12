@@ -238,7 +238,7 @@ export class UI {
       const e = dex.entry(n.name);
       rows += `<div class="dex-row ${beaten ? "caught" : ""}" style="${beaten ? "border:1px solid #ff2d9673" : ""}">
         <div class="dex-thumb">${beaten || current
-          ? `<img class="${beaten ? "" : "sil"}" src="${ASSET(n.img)}" style="${beaten ? `filter:${n.filter}` : ""}" alt="">` : "?"}</div>
+          ? `<img class="${beaten ? "" : "sil"}" src="${ASSET(n.img)}" alt="">` : "?"}</div>
         <div class="dex-info">
           <div class="dex-name">${beaten ? n.name : "？？？"}<span class="nushi-badge">主</span></div>
           <div class="dex-cm">${beaten ? `最大 ${e.maxCm}cm`
@@ -690,16 +690,20 @@ export class UI {
     const spec = cardFXSpec(r);
     const label = RARITY_LABEL[r.rarity];
     const fx = this._cardFX(spec);
-    // 色替え(ヌシ・金色)は初登録のカラー化アニメの終点にも効くよう CSS 変数で渡す
-    const artFilter = r.nushi ? r.nushi.filter : r.gold ? GOLD_FILTER : "none";
+    // 金色の色替えは初登録のカラー化アニメの終点にも効くよう CSS 変数で渡す
+    const artFilter = r.gold ? GOLD_FILTER : "none";
     const artStyle = `--art-filter:${artFilter};filter:${artFilter}`;
+    const artImg = `<img class="fish-art ${r.gold ? "gold-art" : ""}" src="${ASSET(r.img)}" style="${artStyle}" alt="${r.name}">`;
+    const aura = r.nushi ? "nushi" : r.gold ? "gold" : "";
+    const art = aura ? `<div class="art-aura ${aura}">${artImg}<div class="art-sheen"></div>
+      ${aura === "gold" ? '<i class="spk"></i>'.repeat(7) : '<div class="nushi-stamp">討伐</div>'}</div>` : artImg;
 
     o.className = "show";
     o.innerHTML = `
       <div class="reveal-dim" style="opacity:${spec.dimOpacity}"></div>
       ${fx}
       <div class="reveal-scroll">
-        <div class="reveal-card tier${spec.tier} ${spec.hueCycle ? "huecycle" : ""} ${r.isNew ? "is-new" : ""}"
+        <div class="reveal-card tier${spec.tier} ${spec.hueCycle ? "huecycle" : ""} ${r.isNew ? "is-new" : ""} ${aura ? `${aura}-card` : ""}"
              style="--accent:${spec.accent};--entry-scale:${spec.entryScale};--entry-spin:${spec.entrySpin}deg;--entry-delay:${spec.entryDelay}s">
           <div class="rarity ${spec.labelPulse ? "pulse" : ""}"
                style="${spec.hueCycle
@@ -712,13 +716,13 @@ export class UI {
           ${r.isNew ? `
           <div class="new-art">
             <div class="new-burst"></div>
-            <img class="fish-art ${r.gold ? "gold-art" : ""}" src="${ASSET(r.img)}" style="${artStyle}" alt="${r.name}">
+            ${art}
             <div class="new-q">？</div>
             <div class="new-stamp">図鑑<br>NEW!</div>
           </div>
           <div class="new-dex-line">${r.nushi ? "📖 ヌシを図鑑に登録!" : r.isSecret ? "📖 幻の魚を図鑑に登録!"
             : `📖 図鑑に新登録!  ${dex.caughtSpecies} / ${dex.totalSpecies} 種`}</div>`
-          : `<img class="fish-art ${r.gold ? "gold-art" : ""}" src="${ASSET(r.img)}" style="${artStyle}" alt="${r.name}">`}
+          : art}
           ${r.isSmall ? '<div class="small-note">…実は小物だった</div>' : ""}
           <div class="fish-name">${r.name}</div>
           <div class="fish-cm">${r.cm} cm</div>
@@ -878,7 +882,7 @@ export class UI {
         </div>`;
     } else if (k.type === "nushi") {
       border = "#ff2d96";
-      silhouette = `<div class="esc-sil"><img src="${ASSET(k.img)}" style="filter:${k.filter}" alt=""></div>`;
+      silhouette = `<div class="esc-sil"><img src="${ASSET(k.img)}" alt=""></div>`;
       details = `
         <div class="esc-details"><span class="esc-rarity" style="background:#ff2d96">ヌシ</span><span class="esc-name">${k.name}</span></div>
         <div class="esc-progress">

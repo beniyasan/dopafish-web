@@ -246,13 +246,12 @@ export function todayKey(d = new Date()) {
 
 // ===== ヌシ(持ち越しバトル) =====
 // 1回では釣り上げられない。ゾーン内の秒数 hpSec でようやく倒せる(1回のファイトは NUSHI.fightSec 秒)
-// 専用の絵はないので既存の絵を暗く大きく色替えして使う
 export const NUSHI_POOL = [
-  { name: "岩礁のヌシ・黒鉄鯛",   img: "FishLegendaryBream", filter: "brightness(.55) saturate(1.5) hue-rotate(200deg) contrast(1.2)",
+  { name: "岩礁のヌシ・黒鉄鯛",   img: "NushiKurogane",
     cm: [260, 320],   score: 30000, hpSec: 12, line: "出たな…この岩場のヌシだ!!" },
-  { name: "沖のヌシ・群青大カジキ", img: "FishKajiki",          filter: "brightness(.6) saturate(2) hue-rotate(150deg) contrast(1.2)",
+  { name: "沖のヌシ・群青大カジキ", img: "NushiGunjo",
     cm: [480, 560],   score: 50000, hpSec: 16, line: "あの背ビレ…沖のヌシだ、気を抜くな!!" },
-  { name: "深淵のヌシ・古代鯨",    img: "FishRainbowWhale",    filter: "grayscale(.7) brightness(.5) contrast(1.4)",
+  { name: "深淵のヌシ・古代鯨",    img: "NushiKodai",
     cm: [1500, 1800], score: 80000, hpSec: 20, line: "海が…持ち上がった!? 深淵のヌシだ!!!" },
 ];
 export const NUSHI = {
@@ -268,4 +267,4 @@ export const VARIANT = {
   goldScore: 3,             // 金色個体の点数倍率
   crownTop: 0.05,           // サイズ王冠: 種のサイズ幅の上位5%
 };
-export const GOLD_FILTER = "sepia(1) saturate(4) hue-rotate(-12deg) brightness(1.15)";
+export const GOLD_FILTER = "sepia(1) saturate(4.5) hue-rotate(-12deg) brightness(1.2) contrast(1.08)";
