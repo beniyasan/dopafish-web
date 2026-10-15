@@ -69,6 +69,7 @@ export class GameScene {
     this.tweens = [];       // {age, dur, tick(f), done}
 
     this.speedLines = { alpha: 0, target: 0, mode: 0, hue: 0, beams: null, rot: 0 };
+    this.ambient = { alpha: 0, target: 0, mode: 0, hue: 0 }; // 待機中の常時演出(激アツ=2 / RUSH=3 / 虹保留=4)
     this.aura = { alpha: 0, mode: 0, hue: 0, target: 0 };
 
     this.sparkles = [];
@@ -306,7 +307,6 @@ export class GameScene {
   setRushLook(on) {
     this.rushOn = on;
     this.rushTintTarget = on ? 0.12 : 0;
-    this.emberRate = on ? 8 : 0;
     this.rebuildSkySea(on);
   }
 
@@ -481,7 +481,17 @@ export class GameScene {
   setSpeedLines(mode) {
     this.speedLines.mode = mode;
     this.speedLines.target = mode === 0 ? 0 : 1;
-    if (!this.speedLines.beams && mode > 0) {
+    if (mode > 0) this.ensureBeams();
+  }
+
+  // 待機中ずっと薄く回る光線と火の粉。リーチ等の setSpeedLines が出ている間はそちらを優先
+  setAmbient(mode) {
+    this.ambient.target = mode === 0 ? 0 : 1;
+    if (mode > 0) { this.ambient.mode = mode; this.ensureBeams(); }
+  }
+
+  ensureBeams() {
+    if (!this.speedLines.beams) {
       this.speedLines.beams = [];
       for (let i = 0; i < 26; i++) {
         const a = (i / 26) * Math.PI * 2 + rand(-0.08, 0.08);
@@ -712,6 +722,8 @@ export class GameScene {
     this.speedLines.alpha += Math.max(-dt / 0.25, Math.min(dt / 0.25, this.speedLines.target - this.speedLines.alpha));
     this.speedLines.rot += dt * 0.22;
     if (this.speedLines.mode === 4) this.speedLines.hue = (this.speedLines.hue + dt * 0.4) % 1;
+    this.ambient.alpha += Math.max(-dt / 0.6, Math.min(dt / 0.6, this.ambient.target - this.ambient.alpha));
+    this.ambient.hue = (this.ambient.hue + dt * 0.4) % 1;
 
     // aura
     this.aura.alpha += Math.max(-dt / 0.3, Math.min(dt / 0.3, (this.aura.target ?? 0) - this.aura.alpha));
@@ -746,7 +758,8 @@ export class GameScene {
       this.rainEmitter = null;
     }
 
-    // embers
+    // embers: RUSH中は金の粒、激アツ・虹保留の待機中も舞わせる
+    this.emberRate = this.rushOn ? 8 : this.ambient.target > 0 && this.ambient.mode !== 3 ? 6 : 0;
     if (this.emberRate > 0) {
       if (!this.emberEmitter) {
         this.emberEmitter = new Emitter(
@@ -890,30 +903,9 @@ export class GameScene {
 
     // speed lines (z18)
     if (this.speedLines.alpha > 0.01 && this.speedLines.mode > 0 && this.speedLines.beams) {
-      const cols = [null, [255, 255, 255], [255, 59, 48], [255, 204, 0], null];
-      ctx.save();
-      ctx.translate(195, 430);
-      ctx.rotate(this.speedLines.rot);
-      ctx.globalCompositeOperation = "lighter";
-      for (let i = 0; i < this.speedLines.beams.length; i++) {
-        const b = this.speedLines.beams[i];
-        const cyc = (this.t + b.ph) % (b.dur + b.wait);
-        if (cyc > b.dur) continue;
-        const f = cyc / b.dur;
-        const a = (f < 0.3 ? f / 0.3 : 1 - (f - 0.3) / 0.7) * b.peak * this.speedLines.alpha;
-        const col = this.speedLines.mode === 4
-          ? hslToRgb((this.speedLines.hue + i * 0.11) % 1, 0.85, 0.5)
-          : cols[this.speedLines.mode];
-        ctx.save();
-        ctx.rotate(b.a);
-        const r = b.r0 - b.travel * f;
-        ctx.globalAlpha = a;
-        ctx.drawImage(tinted(tex.beam, col), r - b.w, -b.h / 2, b.w, b.h);
-        ctx.restore();
-      }
-      ctx.globalAlpha = 1;
-      ctx.restore();
-      ctx.globalCompositeOperation = "source-over";
+      this.drawBeams(ctx, this.speedLines.mode, this.speedLines.alpha, this.speedLines.hue);
+    } else if (this.ambient.alpha > 0.01 && this.ambient.mode > 0 && this.speedLines.beams) {
+      this.drawBeams(ctx, this.ambient.mode, this.ambient.alpha * 0.4, this.ambient.hue);
     }
 
     // fx nodes (z19-21: rings, pillar, lightning)
@@ -923,6 +915,31 @@ export class GameScene {
     for (const e of this.emitters) e.draw(ctx);
 
     ctx.restore();
+  }
+
+  drawBeams(ctx, mode, alpha, hue) {
+    const cols = [null, [255, 255, 255], [255, 59, 48], [255, 204, 0], null];
+    ctx.save();
+    ctx.translate(195, 430);
+    ctx.rotate(this.speedLines.rot);
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < this.speedLines.beams.length; i++) {
+      const b = this.speedLines.beams[i];
+      const cyc = (this.t + b.ph) % (b.dur + b.wait);
+      if (cyc > b.dur) continue;
+      const f = cyc / b.dur;
+      const a = (f < 0.3 ? f / 0.3 : 1 - (f - 0.3) / 0.7) * b.peak * alpha;
+      const col = mode === 4 ? hslToRgb((hue + i * 0.11) % 1, 0.85, 0.5) : cols[mode];
+      ctx.save();
+      ctx.rotate(b.a);
+      const r = b.r0 - b.travel * f;
+      ctx.globalAlpha = a;
+      ctx.drawImage(tinted(tex.beam, col), r - b.w, -b.h / 2, b.w, b.h);
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+    ctx.globalCompositeOperation = "source-over";
   }
 
   drawRod(ctx) {

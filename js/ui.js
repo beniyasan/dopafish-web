@@ -25,15 +25,18 @@ const BANNER_STYLE = {
 export class UI {
   constructor(root, model, snd, haptics, scene) {
     this.model = model; this.snd = snd; this.haptics = haptics; this.scene = scene;
+    this.root = root;
     this._c = {}; // change cache
 
     root.insertAdjacentHTML("beforeend", `
       <div id="tod-tint"></div>
       <div id="sea-stage"></div>
+      <div id="hot-tint"></div>
       <div id="fog-layer" class="hidden"></div>
       <div id="vignette" class="hidden"></div>
       <div id="vignette-hot" class="hidden"></div>
       <div id="flash"></div>
+      <div id="rush-frame"></div>
 
       <div id="hold-row" class="hidden"><span class="hold-label">保留</span><div id="hold-icons"></div></div>
       <div id="hud">
@@ -62,7 +65,7 @@ export class UI {
       <div id="cast-zone" class="hidden">
         <div id="cast-btn">
           <svg viewBox="0 0 130 130" width="130" height="130">
-            <circle cx="65" cy="65" r="59" fill="rgba(255,255,255,.12)" stroke="rgba(255,255,255,.5)" stroke-width="3"/>
+            <circle cx="65" cy="65" r="59" fill="rgba(0,24,70,.55)" stroke="rgba(255,255,255,.85)" stroke-width="3"/>
             <circle id="charge-ring" cx="65" cy="65" r="59" fill="none" stroke="url(#chargeGrad)"
                     stroke-width="7" stroke-linecap="round" stroke-dasharray="370.7"
                     stroke-dashoffset="370.7" transform="rotate(-90 65 65)"/>
@@ -119,6 +122,8 @@ export class UI {
 
       <div id="oldman-callout" class="hidden"></div>
       <div id="oldman-cutin" class="hidden"></div>
+      <div id="cutin" class="hidden"></div>
+      <div id="rush-cutin" class="hidden"></div>
       <div id="banner" class="hidden"></div>
       <div id="reveal" class="hidden"></div>
       <div id="escape-card" class="hidden"></div>
@@ -213,6 +218,17 @@ export class UI {
     });
 
     this._syncIcons();
+  }
+
+  // 一定時間だけ出して消すカットイン(出し直すとアニメーションを頭から再生)
+  _cutin(id, html, ms) {
+    const el = this.$(id);
+    el.innerHTML = html;
+    el.className = "";
+    void el.offsetWidth;
+    el.className = "show";
+    clearTimeout(el._t);
+    el._t = setTimeout(() => { el.className = "hidden"; }, ms);
   }
 
   _stagePos(e) {
@@ -373,7 +389,13 @@ export class UI {
   update() {
     const m = this.model, c = this._c, $ = this.$;
 
-    if (c.score !== m.score) { $("hud-score").textContent = m.score; c.score = m.score; }
+    // スコアは一気に変えず、毎フレーム差の一部ずつ数え上げる(0.5秒ほどで追いつく)
+    if (this._shownScore === undefined || m.score < this._shownScore) this._shownScore = m.score;
+    if (this._shownScore !== m.score) this._shownScore += Math.ceil((m.score - this._shownScore) * 0.15);
+    if (c.score !== this._shownScore) {
+      $("hud-score").textContent = this._shownScore; c.score = this._shownScore;
+      $("hud-score").classList.toggle("counting", this._shownScore !== m.score);
+    }
     if (c.medals !== m.medals) { $("hud-medals").textContent = `🪙 ${m.medals}`; c.medals = m.medals; }
     if (c.combo !== m.combo) {
       $("hud-combo").textContent = `COMBO ×${m.combo}`;
@@ -427,6 +449,31 @@ export class UI {
       if (el) { el.classList.remove("changed"); void el.offsetWidth; el.classList.add("changed"); }
     }
 
+    // 待機中の常時演出: 激アツ(赤以上の保留・連続予告) / RUSH / 虹保留
+    const idleish = ["idle", "charging", "flying", "waiting"].includes(m.phase);
+    const rainbowHold = idleish && !m.rushActive && m.holds.some((h) => h.color >= 5);
+    const nowHot = (m.phase === "flying" || m.phase === "waiting") && (m.currentHold?.color ?? 0) >= 3;
+    const hotLook = idleish && !m.rushActive && !rainbowHold
+      && ((m.holds[0]?.color ?? 0) >= 3 || m.renzokuStep >= 2 || nowHot);
+    const lookKey = `${hotLook}:${m.rushActive}:${rainbowHold}:${idleish}`;
+    if (c.look !== lookKey) {
+      c.look = lookKey;
+      this.root.classList.toggle("hot", hotLook);
+      this.root.classList.toggle("rush", m.rushActive);
+      this.root.classList.toggle("rainbow", rainbowHold);
+      this.scene.setAmbient(m.rushActive && idleish ? 3 : rainbowHold ? 4 : hotLook ? 2 : 0);
+    }
+    // 激アツのカットイン: 同じ保留では1回だけ(投げるたびに出し直さない)
+    const hotSeq = hotLook ? (nowHot ? m.currentHold?.seq : m.holds[0]?.seq) ?? -1 : null;
+    if (hotSeq !== null && hotSeq !== this._hotSeq) {
+      this._hotSeq = hotSeq;
+      this._cutin("cutin", `<div class="ci-main">激アツ</div><div class="ci-sub">CHANCE UP</div>`, 1500);
+      this.model.doFlash([255, 255, 255], 0.7, 0.12);
+      this.scene.shake(6);
+      this.snd.play("cutin");
+      this.haptics.play({ name: "cutIn" });
+    }
+
     // 1日のリザルト
     if (c.dayRes !== m.dayResult?.id) {
       c.dayRes = m.dayResult?.id;
@@ -445,6 +492,7 @@ export class UI {
     // rush HUD
     const rushOn = m.rushActive;
     if (c.rushOn !== rushOn || c.rushLeft !== m.rushLeft) {
+      const gained = rushOn && c.rushOn && m.rushLeft > c.rushLeft ? m.rushLeft - c.rushLeft : 0;
       c.rushOn = rushOn; c.rushLeft = m.rushLeft;
       const h = $("rush-hud");
       h.classList.toggle("hidden", !rushOn);
@@ -460,6 +508,11 @@ export class UI {
           <div class="rush-hint">${s.hint}</div>
           <div class="rush-prob">上乗せ抽選 ${(m.rushBonusProbability * 100).toFixed(1)}% / 投</div>
           <div class="rush-note">当選後の連打成功が必要</div>`;
+        // 上乗せ: 残り回転数の横に +N を跳ねさせる
+        if (gained) {
+          h.querySelector(".rush-line")?.insertAdjacentHTML("beforeend", `<span class="rush-plus">+${gained}</span>`);
+          this._cutin("rush-cutin", `<div class="rc-main">上乗せ!!</div><div class="rc-sub">RUSH +${gained}回転</div>`, 1900);
+        }
       }
     }
 

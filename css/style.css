@@ -38,12 +38,16 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
   border-radius: 999px; padding: 4px 14px; }
 
 #rush-hud { max-width: 330px; padding: 8px 16px; border-radius: 16px; text-align: center;
-  background: linear-gradient(135deg, rgba(255,149,0,.9), rgba(0,0,0,.9));
-  border: 2px solid #ff9500; box-shadow: 0 0 10px rgba(255,149,0,.3); }
+  background: linear-gradient(135deg, rgba(200,70,0,.95), rgba(0,0,0,.92));
+  border: 3px dotted #ffd60a; box-shadow: 0 0 18px rgba(255,149,0,.85);
+  animation: rushLamp .35s steps(1) infinite alternate, rushThump .5s ease-out infinite; }
 #rush-hud.urgent { background: linear-gradient(135deg, rgba(255,59,48,.9), rgba(0,0,0,.9));
-  border-color: #ffd60a; animation: rushPulse .7s ease-in-out infinite alternate; }
+  animation: rushLamp .35s steps(1) infinite alternate, rushThump .5s ease-out infinite,
+    rushPulse .7s ease-in-out infinite alternate; }
+@keyframes rushLamp { from { border-color: #ffd60a } to { border-color: #fff6c2 } }
+@keyframes rushThump { 0%, 100% { transform: scale(1) } 8% { transform: scale(1.05) } }
 @keyframes rushPulse { from { box-shadow: 0 0 6px rgba(255,59,48,.3) } to { box-shadow: 0 0 20px rgba(255,59,48,.9) } }
-.rush-line { display: flex; align-items: baseline; justify-content: center; gap: 12px; white-space: nowrap; }
+.rush-line { position: relative; display: flex; align-items: baseline; justify-content: center; gap: 12px; white-space: nowrap; }
 .rush-heading { font-size: 22px; font-weight: 900; }
 .rush-heading.gold { color: #ffd60a; }
 #rush-hud.urgent .rush-heading { color: #fff; }
@@ -66,7 +70,7 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
 
 /* ---------- cast controls ---------- */
 #cast-zone { position: absolute; left: 0; right: 0; bottom: 52px; display: flex; justify-content: center; }
-#cast-btn { position: relative; width: 130px; height: 130px; cursor: pointer; touch-action: none; }
+#cast-btn { position: relative; width: 130px; height: 130px; cursor: pointer; touch-action: none; isolation: isolate; }
 #cast-btn svg { display: block; }
 #charge-ring { transition: none; }
 .cast-label { position: absolute; inset: 0; display: flex; flex-direction: column;
@@ -77,11 +81,11 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
 #cast-side-r { left: calc(50% + 92px); }
 #cast-side-l { right: calc(50% + 92px); }
 .pill { border-radius: 999px; padding: 8px 12px; min-width: 62px; text-align: center;
-  font-size: 13px; font-weight: 900; color: rgba(255,255,255,.85);
-  background: rgba(0,0,0,.35); border: 1.5px solid rgba(255,255,255,.4); }
+  font-size: 13px; font-weight: 900; color: #fff;
+  background: rgba(0,20,60,.78); border: 2px solid rgba(255,255,255,.8); box-shadow: 0 2px 6px rgba(0,0,0,.4); }
 .pill .sub { display: block; font-size: 9px; font-weight: 800; }
 .pill.on { background: #ffd60a; color: #000; border-color: transparent; }
-.pill.dim { color: rgba(255,255,255,.7); }
+.pill.dim { color: rgba(255,255,255,.85); }
 #cast-zone:has(#cast-btn:active) #cast-side-r,
 #cast-zone:has(#cast-btn:active) #cast-side-l { display: none; }
 
@@ -583,6 +587,15 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
 .hb.changed { animation: hbChange .6s cubic-bezier(.2,1.6,.4,1); }
 @keyframes hbBob { from { transform: translateY(0) } to { transform: translateY(-4px) } }
 @keyframes hbChange { 0% { transform: scale(2.2); filter: brightness(3) } 100% { transform: none; filter: none } }
+/* 保留変化: 玉からリングがはじける / 虹保留: リングが出続ける */
+.hb { position: relative; }
+.hb.rainbow::before, .hb.rainbow::after, .hb.changed::after { content: ""; position: absolute; inset: 0;
+  border-radius: 50%; border: 3px solid #fff; pointer-events: none; }
+.hb.rainbow::before, .hb.rainbow::after { animation: hbRing 1s ease-out infinite; }
+.hb.rainbow::after { border-color: #ffd60a; animation-delay: .5s; }
+.hb.changed::after { border-color: #fff6c2; box-shadow: 0 0 14px #ffd60a; animation: hbBurst .6s ease-out forwards; }
+@keyframes hbRing { from { transform: scale(.9); opacity: 1 } to { transform: scale(3); opacity: 0 } }
+@keyframes hbBurst { from { transform: scale(.4); opacity: 1 } to { transform: scale(3.4); opacity: 0 } }
 
 /* 1日のリザルト */
 #day-end { position: absolute; inset: 0; display: none; z-index: 35; background: rgba(0,0,0,.6); }
@@ -747,3 +760,75 @@ button { font: inherit; background: none; border: none; cursor: pointer; color: 
 #sea-stage.s3 { opacity: 1; background: linear-gradient(rgba(120,0,40,.25), rgba(160,0,60,.55));
   animation: seaPulse .8s ease-in-out infinite alternate; }
 @keyframes seaPulse { from { filter: brightness(.85) } to { filter: brightness(1.25) } }
+
+/* ---------- 待機中の常時演出(#app.hot / .rush / .rainbow は ui.update が付ける) ---------- */
+#hot-tint { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .8s;
+  background: linear-gradient(rgba(70,0,20,.72), rgba(210,40,30,.5) 47%, rgba(190,0,40,.55) 49%, rgba(110,0,30,.7)); }
+#app.hot #hot-tint { opacity: 1; animation: seaPulse .8s ease-in-out infinite alternate; }
+#app.hot #vignette-hot.hidden { display: block !important; }
+#app.hot #prompt:not(.hot), #app.rainbow #prompt:not(.hot) { font-size: 20px; color: #ffd60a;
+  text-shadow: 0 0 8px #ff3b30, 0 2px 0 #5a0000; animation: promptPulse .5s ease-in-out infinite alternate; }
+#app.rainbow #prompt:not(.hot) { text-shadow: 0 0 10px #ff2d96, 0 2px 0 #000; }
+#app.hot .pill:not(.on) { border-color: rgba(255,140,120,.9); background: rgba(50,0,10,.8); }
+#app.rush .pill:not(.on) { border-color: rgba(255,214,10,.9); background: rgba(60,20,0,.8); }
+#app.hot .omen-bar { width: 110px; height: 8px; box-shadow: 0 0 0 1px rgba(255,214,10,.6); }
+#app.hot #omen-fill.hot { animation: pulseOp .5s ease-in-out infinite alternate; }
+@keyframes pulseOp { from { opacity: .45 } to { opacity: 1 } }
+
+#cast-btn::before { content: ""; position: absolute; inset: -20px; z-index: -1; border-radius: 50%;
+  pointer-events: none; opacity: 0; transition: opacity .4s; }
+#app.hot #cast-btn::before { opacity: 1; background: radial-gradient(circle, rgba(255,59,48,.75) 40%, rgba(255,59,48,0) 70%);
+  animation: pulseOp .45s ease-in-out infinite alternate; }
+#app.rush #cast-btn::before { opacity: 1; background: radial-gradient(circle, rgba(255,214,10,.7) 40%, rgba(255,214,10,0) 70%);
+  animation: pulseOp .6s ease-in-out infinite alternate; }
+#app.rainbow #cast-btn::before { opacity: 1; inset: -8px;
+  background: conic-gradient(#ff3b30, #ff9500, #ffd60a, #34c759, #007aff, #af52de, #ff3b30);
+  -webkit-mask: radial-gradient(closest-side, transparent 80%, #000 81%);
+  mask: radial-gradient(closest-side, transparent 80%, #000 81%);
+  animation: raySpin 1.6s linear infinite; }
+
+#rush-frame { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .6s;
+  box-shadow: inset 0 0 0 5px #ffd60a, inset 0 0 28px rgba(255,170,0,.85); }
+#app.rush #rush-frame { opacity: 1; animation: rushFrame .35s steps(1) infinite alternate; }
+@keyframes rushFrame { from { box-shadow: inset 0 0 0 5px #ffd60a, inset 0 0 28px rgba(255,170,0,.85) }
+  to { box-shadow: inset 0 0 0 5px #ff9500, inset 0 0 36px rgba(255,59,48,.75) } }
+
+.rush-plus { position: absolute; right: -8px; top: -16px; padding: 1px 8px; border-radius: 999px;
+  background: #ff3b30; color: #fff; font-size: 20px; font-weight: 900; box-shadow: 0 0 12px #ff3b30;
+  animation: rushPlus 2.4s cubic-bezier(.2,1.5,.4,1) forwards; }
+@keyframes rushPlus { 0% { opacity: 0; transform: translateY(14px) scale(.4) } 12% { opacity: 1; transform: translateY(-6px) scale(1.5) }
+  22%, 80% { opacity: 1; transform: none } 100% { opacity: 0; transform: translateY(-12px) } }
+
+#hud-score.counting { color: #ffd60a; text-shadow: 0 0 10px #ff9500; }
+#app.rush #hud-score { text-shadow: 0 0 10px #ff9500, 0 2px 0 #8a3a00; }
+
+@media (prefers-reduced-motion: reduce) {
+  #app.hot #hot-tint, #app.hot #prompt, #app.rainbow #prompt, #app.rush #rush-frame, #rush-hud,
+  #cast-btn::before, .hb.rainbow::before, .hb.rainbow::after { animation: none !important; }
+}
+
+/* ---------- カットイン: 激アツ / RUSH上乗せ ---------- */
+#cutin, #rush-cutin { position: absolute; left: 0; right: 0; pointer-events: none; text-align: center; }
+#cutin { top: 170px; }
+#cutin.show { animation: ciSlam 1.5s cubic-bezier(.2,1.4,.4,1) forwards; }
+.ci-main { font-size: 92px; font-weight: 900; line-height: 1; letter-spacing: -2px; color: #ffd60a;
+  -webkit-text-stroke: 3px #3a0000; text-shadow: 0 6px 0 #8a0000, 0 0 30px #ff3b30, 0 0 60px #ff3b30; }
+.ci-sub { display: inline-block; margin-top: 6px; padding: 2px 14px; background: #000; color: #ff3b30;
+  font-size: 16px; font-weight: 900; letter-spacing: 6px; }
+@keyframes ciSlam {
+  0% { transform: scale(3.2) rotate(-8deg); opacity: 0 }
+  14% { transform: scale(1) rotate(-8deg); opacity: 1 }
+  75% { transform: scale(1.05) rotate(-8deg); opacity: 1 }
+  100% { transform: scale(1.5) rotate(-8deg); opacity: 0 } }
+
+#rush-cutin { left: -20px; right: -20px; top: 250px; padding: 10px 0 12px; background: rgba(0,0,0,.88);
+  border-top: 3px solid #ffd60a; border-bottom: 3px solid #ffd60a; box-shadow: 0 0 30px rgba(255,214,10,.9); }
+#rush-cutin.show { animation: rcSlide 1.9s cubic-bezier(.2,1.2,.4,1) forwards; }
+.rc-main { font-size: 50px; font-weight: 900; line-height: 1; color: #ffd60a; -webkit-text-stroke: 2px #5a1a00;
+  text-shadow: 0 4px 0 #a02600, 0 0 22px #ff9500; }
+.rc-sub { margin-top: 4px; font-size: 15px; font-weight: 900; letter-spacing: 4px; color: #fff; }
+@keyframes rcSlide {
+  0% { transform: translateX(420px) skewX(-14deg); opacity: 0 }
+  12% { transform: translateX(0) skewX(-14deg); opacity: 1 }
+  80% { transform: translateX(-10px) skewX(-14deg); opacity: 1 }
+  100% { transform: translateX(-440px) skewX(-14deg); opacity: 0 } }

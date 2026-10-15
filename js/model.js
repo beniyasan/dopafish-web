@@ -158,7 +158,7 @@ export class GameModel {
     this.escapeShownAt = 0;
     this.ambientArmed = false;
 
-    // debug: URL params ?rig=ur ?fast ?go ?win ?secret ?mashneed=0.2 ?rush=10 ?ending ?daycast=29 ?omen=90 ?nushi ?gold
+    // debug: URL params ?rig=ur ?fast ?go ?win ?secret ?mashneed=0.2 ?rush=10 ?ending ?daycast=29 ?omen=90 ?nushi ?gold ?hold=3
     const q = new URLSearchParams(location.search);
     this.rig = q.get("rig");
     this.fast = q.has("fast");
@@ -168,6 +168,8 @@ export class GameModel {
     this.forceEnding = q.has("ending");
     this.forceNushi = q.has("nushi");
     this.forceGold = q.has("gold");
+    // ?hold=3 保留の表示色を固定(0白〜5虹)。激アツ時・虹保留の見た目確認用
+    this.debugHold = q.has("hold") ? Math.max(0, Math.min(HOLD_COLORS.length - 1, parseInt(q.get("hold"), 10) || 0)) : null;
     // ?daycast=29 その日の投数 / ?omen=90 海の気配
     if (q.has("daycast")) { this.day.cast = Math.min(DAY.casts, parseInt(q.get("daycast"), 10) || 0); this.slotIdx = this.slotFor(this.day.cast + 1); }
     if (q.has("omen")) this.omen = Math.min(OMEN.max - 1, parseInt(q.get("omen"), 10) || 0);
@@ -459,6 +461,7 @@ export class GameModel {
     };
     h.color = roll(h.c1);
     h.target = Math.max(h.color, roll(h.c2));
+    if (this.debugHold !== null) h.color = h.target = this.debugHold;
   }
 
   // この保留を当該とする連続予告を出すか(3投前から段階的に熱くなる)
@@ -520,6 +523,11 @@ export class GameModel {
     this.snd.play("shine");
     this.haptics.play({ name: "bite" });
     const name = ["", "青", "緑", "赤", "金", "虹"][h.color];
+    if (h.color >= 3) {
+      // 赤以上への変化は画面ごと叩く(金以上は金色に光らせて強めに揺らす)
+      this.doFlash(h.color >= 4 ? [255, 214, 10] : [255, 255, 255], 0.6, 0.15);
+      this.fx.shake(h.color >= 4 ? 7 : 4);
+    }
     if (h.color >= 3) this.showBanner(onCast ? `${name}保留に変化!!` : "保留変化!!", h.color >= 4 ? "激アツ!!" : "チャンス!", h.color >= 5 ? "rainbow" : h.color >= 4 ? "gold" : "hot", 1.4);
   }
 
@@ -538,6 +546,9 @@ export class GameModel {
       this.holdChange = { id: Math.random().toString(36).slice(2), seq: h.seq, onCast: false };
       this.schedule(0.3, () => {
         this.snd.play("shine"); this.snd.play("perfect");
+        this.doFlash([255, 255, 255], 0.9, 0.3);
+        this.fx.shake(8);
+        this.fx.starShower(30);
         this.showBanner("海の気配がMAX!!", "虹保留 = 大物確定", "rainbow", 2.0);
       });
     }
