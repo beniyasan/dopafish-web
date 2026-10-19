@@ -60,3 +60,4 @@ iOSアプリ「Dopagaki Fishing Collection」([beniyasan/dopafish](https://githu
 | `?omen=N` | 海の気配ゲージをNで開始(100で満タン) |
 | `?nushi` | 毎投ヌシに遭遇する |
 | `?gold` | 釣れる魚を必ず金色個体にする |
+| `?hold=N` | 保留の表示色を固定(0白/1青/2緑/3赤/4金/5虹)。激アツ・虹保留の見た目確認用 |

@@ -3,6 +3,12 @@ import { tex, buildTextures, tinted, Emitter, rgb, rgba } from "./particles.js";
 import { rand, randInt, pick } from "./data.js";
 
 const W = 390, H = 844, WATER_Y = 442;
+// 虹色は色相を段階に丸めてから tinted() に渡す(毎フレーム新しい色でキャッシュが増え続けないように)
+const HUE_STEPS = 24;
+const rainbowRgb = (h, s, l) => hslToRgb(Math.round((((h % 1) + 1) % 1) * HUE_STEPS) / HUE_STEPS % 1, s, l);
+// OSの「視差効果を減らす」設定: 待機中の常時演出(回る光線)を止める
+const reducedMotionMQ = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+const prefersReducedMotion = () => !!reducedMotionMQ?.matches;
 // ロッド(ワールド座標は y が上向き)。根元を支点に角度とブランクのしなりをバネで動かす
 const ROD = {
   butt: { x: 70, y: 6 }, len: 150,
@@ -69,6 +75,7 @@ export class GameScene {
     this.tweens = [];       // {age, dur, tick(f), done}
 
     this.speedLines = { alpha: 0, target: 0, mode: 0, hue: 0, beams: null, rot: 0 };
+    this.ambient = { alpha: 0, target: 0, mode: 0, hue: 0 }; // 待機中の常時演出(激アツ=2 / RUSH=3 / 虹保留=4)
     this.aura = { alpha: 0, mode: 0, hue: 0, target: 0 };
 
     this.sparkles = [];
@@ -306,7 +313,6 @@ export class GameScene {
   setRushLook(on) {
     this.rushOn = on;
     this.rushTintTarget = on ? 0.12 : 0;
-    this.emberRate = on ? 8 : 0;
     this.rebuildSkySea(on);
   }
 
@@ -481,7 +487,17 @@ export class GameScene {
   setSpeedLines(mode) {
     this.speedLines.mode = mode;
     this.speedLines.target = mode === 0 ? 0 : 1;
-    if (!this.speedLines.beams && mode > 0) {
+    if (mode > 0) this.ensureBeams();
+  }
+
+  // 待機中ずっと薄く回る光線と火の粉。リーチ等の setSpeedLines が出ている間はそちらを優先
+  setAmbient(mode) {
+    this.ambient.target = mode === 0 ? 0 : 1;
+    if (mode > 0) { this.ambient.mode = mode; this.ensureBeams(); }
+  }
+
+  ensureBeams() {
+    if (!this.speedLines.beams) {
       this.speedLines.beams = [];
       for (let i = 0; i < 26; i++) {
         const a = (i / 26) * Math.PI * 2 + rand(-0.08, 0.08);
@@ -712,6 +728,8 @@ export class GameScene {
     this.speedLines.alpha += Math.max(-dt / 0.25, Math.min(dt / 0.25, this.speedLines.target - this.speedLines.alpha));
     this.speedLines.rot += dt * 0.22;
     if (this.speedLines.mode === 4) this.speedLines.hue = (this.speedLines.hue + dt * 0.4) % 1;
+    this.ambient.alpha += Math.max(-dt / 0.6, Math.min(dt / 0.6, this.ambient.target - this.ambient.alpha));
+    if (!prefersReducedMotion()) this.ambient.hue = (this.ambient.hue + dt * 0.4) % 1;
 
     // aura
     this.aura.alpha += Math.max(-dt / 0.3, Math.min(dt / 0.3, (this.aura.target ?? 0) - this.aura.alpha));
@@ -746,7 +764,8 @@ export class GameScene {
       this.rainEmitter = null;
     }
 
-    // embers
+    // embers: RUSH中は金の粒、激アツ・虹保留の待機中も舞わせる(reduced motion では出さない)
+    this.emberRate = prefersReducedMotion() ? 0 : this.rushOn ? 8 : this.ambient.target > 0 && this.ambient.mode !== 3 ? 6 : 0;
     if (this.emberRate > 0) {
       if (!this.emberEmitter) {
         this.emberEmitter = new Emitter(
@@ -804,7 +823,7 @@ export class GameScene {
     if (this.aura.alpha > 0.01 && this.aura.mode > 0 && this.shadowAlpha > 0.05 && this.shadowXY) {
       const cols = [[255, 255, 255], [255, 255, 255], [255, 59, 48], [255, 204, 0], null];
       const col = this.aura.mode === 4
-        ? hslToRgb(this.aura.hue, 0.95, 0.5) : cols[this.aura.mode];
+        ? rainbowRgb(this.aura.hue, 0.95, 0.5) : cols[this.aura.mode];
       ctx.globalCompositeOperation = "lighter";
       ctx.globalAlpha = Math.min(1, this.shadowAlpha * (0.4 + 0.18 * Math.sin(this.t * 9))) * this.aura.alpha;
       this.img2c(tinted(tex.circle, col), this.shadowXY.x, this.shadowXY.y,
@@ -890,30 +909,9 @@ export class GameScene {
 
     // speed lines (z18)
     if (this.speedLines.alpha > 0.01 && this.speedLines.mode > 0 && this.speedLines.beams) {
-      const cols = [null, [255, 255, 255], [255, 59, 48], [255, 204, 0], null];
-      ctx.save();
-      ctx.translate(195, 430);
-      ctx.rotate(this.speedLines.rot);
-      ctx.globalCompositeOperation = "lighter";
-      for (let i = 0; i < this.speedLines.beams.length; i++) {
-        const b = this.speedLines.beams[i];
-        const cyc = (this.t + b.ph) % (b.dur + b.wait);
-        if (cyc > b.dur) continue;
-        const f = cyc / b.dur;
-        const a = (f < 0.3 ? f / 0.3 : 1 - (f - 0.3) / 0.7) * b.peak * this.speedLines.alpha;
-        const col = this.speedLines.mode === 4
-          ? hslToRgb((this.speedLines.hue + i * 0.11) % 1, 0.85, 0.5)
-          : cols[this.speedLines.mode];
-        ctx.save();
-        ctx.rotate(b.a);
-        const r = b.r0 - b.travel * f;
-        ctx.globalAlpha = a;
-        ctx.drawImage(tinted(tex.beam, col), r - b.w, -b.h / 2, b.w, b.h);
-        ctx.restore();
-      }
-      ctx.globalAlpha = 1;
-      ctx.restore();
-      ctx.globalCompositeOperation = "source-over";
+      this.drawBeams(ctx, this.speedLines.mode, this.speedLines.alpha, this.speedLines.hue);
+    } else if (this.ambient.alpha > 0.01 && this.ambient.mode > 0 && this.speedLines.beams && !prefersReducedMotion()) {
+      this.drawBeams(ctx, this.ambient.mode, this.ambient.alpha * 0.4, this.ambient.hue);
     }
 
     // fx nodes (z19-21: rings, pillar, lightning)
@@ -923,6 +921,31 @@ export class GameScene {
     for (const e of this.emitters) e.draw(ctx);
 
     ctx.restore();
+  }
+
+  drawBeams(ctx, mode, alpha, hue) {
+    const cols = [null, [255, 255, 255], [255, 59, 48], [255, 204, 0], null];
+    ctx.save();
+    ctx.translate(195, 430);
+    ctx.rotate(this.speedLines.rot);
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < this.speedLines.beams.length; i++) {
+      const b = this.speedLines.beams[i];
+      const cyc = (this.t + b.ph) % (b.dur + b.wait);
+      if (cyc > b.dur) continue;
+      const f = cyc / b.dur;
+      const a = (f < 0.3 ? f / 0.3 : 1 - (f - 0.3) / 0.7) * b.peak * alpha;
+      const col = mode === 4 ? rainbowRgb(hue + i * 0.11, 0.85, 0.5) : cols[mode];
+      ctx.save();
+      ctx.rotate(b.a);
+      const r = b.r0 - b.travel * f;
+      ctx.globalAlpha = a;
+      ctx.drawImage(tinted(tex.beam, col), r - b.w, -b.h / 2, b.w, b.h);
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+    ctx.globalCompositeOperation = "source-over";
   }
 
   drawRod(ctx) {
