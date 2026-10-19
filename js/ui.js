@@ -470,6 +470,8 @@ export class UI {
     // 連続予告の最終段(renzokuStep 3)は今投げている保留が当該なので、色が赤未満でもそちらに付ける
     const currentIsHot = nowHot || (inCast && m.renzokuStep === 3);
     const hotSeq = hotLook ? (currentIsHot ? m.currentHold?.seq : m.holds[0]?.seq) ?? -1 : null;
+    // 新しい1日は保留の seq が 0 から振り直されるので、前日の記録は捨てる
+    if (this._hotDay !== m.day) { this._hotDay = m.day; this._hotSeq = undefined; }
     if (hotSeq !== null && hotSeq !== this._hotSeq) {
       this._hotSeq = hotSeq;
       this._cutin("cutin", `<div class="ci-main">激アツ</div><div class="ci-sub">CHANCE UP</div>`, 1500);

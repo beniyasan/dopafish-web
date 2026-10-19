@@ -764,8 +764,8 @@ export class GameScene {
       this.rainEmitter = null;
     }
 
-    // embers: RUSH中は金の粒、激アツ・虹保留の待機中も舞わせる
-    this.emberRate = this.rushOn ? 8 : this.ambient.target > 0 && this.ambient.mode !== 3 ? 6 : 0;
+    // embers: RUSH中は金の粒、激アツ・虹保留の待機中も舞わせる(reduced motion では出さない)
+    this.emberRate = prefersReducedMotion() ? 0 : this.rushOn ? 8 : this.ambient.target > 0 && this.ambient.mode !== 3 ? 6 : 0;
     if (this.emberRate > 0) {
       if (!this.emberEmitter) {
         this.emberEmitter = new Emitter(
