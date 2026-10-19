@@ -3,6 +3,12 @@ import { tex, buildTextures, tinted, Emitter, rgb, rgba } from "./particles.js";
 import { rand, randInt, pick } from "./data.js";
 
 const W = 390, H = 844, WATER_Y = 442;
+// 虹色は色相を段階に丸めてから tinted() に渡す(毎フレーム新しい色でキャッシュが増え続けないように)
+const HUE_STEPS = 24;
+const rainbowRgb = (h, s, l) => hslToRgb(Math.round((((h % 1) + 1) % 1) * HUE_STEPS) / HUE_STEPS % 1, s, l);
+// OSの「視差効果を減らす」設定: 待機中の常時演出(回る光線)を止める
+const reducedMotionMQ = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+const prefersReducedMotion = () => !!reducedMotionMQ?.matches;
 // ロッド(ワールド座標は y が上向き)。根元を支点に角度とブランクのしなりをバネで動かす
 const ROD = {
   butt: { x: 70, y: 6 }, len: 150,
@@ -723,7 +729,7 @@ export class GameScene {
     this.speedLines.rot += dt * 0.22;
     if (this.speedLines.mode === 4) this.speedLines.hue = (this.speedLines.hue + dt * 0.4) % 1;
     this.ambient.alpha += Math.max(-dt / 0.6, Math.min(dt / 0.6, this.ambient.target - this.ambient.alpha));
-    this.ambient.hue = (this.ambient.hue + dt * 0.4) % 1;
+    if (!prefersReducedMotion()) this.ambient.hue = (this.ambient.hue + dt * 0.4) % 1;
 
     // aura
     this.aura.alpha += Math.max(-dt / 0.3, Math.min(dt / 0.3, (this.aura.target ?? 0) - this.aura.alpha));
@@ -817,7 +823,7 @@ export class GameScene {
     if (this.aura.alpha > 0.01 && this.aura.mode > 0 && this.shadowAlpha > 0.05 && this.shadowXY) {
       const cols = [[255, 255, 255], [255, 255, 255], [255, 59, 48], [255, 204, 0], null];
       const col = this.aura.mode === 4
-        ? hslToRgb(this.aura.hue, 0.95, 0.5) : cols[this.aura.mode];
+        ? rainbowRgb(this.aura.hue, 0.95, 0.5) : cols[this.aura.mode];
       ctx.globalCompositeOperation = "lighter";
       ctx.globalAlpha = Math.min(1, this.shadowAlpha * (0.4 + 0.18 * Math.sin(this.t * 9))) * this.aura.alpha;
       this.img2c(tinted(tex.circle, col), this.shadowXY.x, this.shadowXY.y,
@@ -904,7 +910,7 @@ export class GameScene {
     // speed lines (z18)
     if (this.speedLines.alpha > 0.01 && this.speedLines.mode > 0 && this.speedLines.beams) {
       this.drawBeams(ctx, this.speedLines.mode, this.speedLines.alpha, this.speedLines.hue);
-    } else if (this.ambient.alpha > 0.01 && this.ambient.mode > 0 && this.speedLines.beams) {
+    } else if (this.ambient.alpha > 0.01 && this.ambient.mode > 0 && this.speedLines.beams && !prefersReducedMotion()) {
       this.drawBeams(ctx, this.ambient.mode, this.ambient.alpha * 0.4, this.ambient.hue);
     }
 
@@ -929,7 +935,7 @@ export class GameScene {
       if (cyc > b.dur) continue;
       const f = cyc / b.dur;
       const a = (f < 0.3 ? f / 0.3 : 1 - (f - 0.3) / 0.7) * b.peak * alpha;
-      const col = mode === 4 ? hslToRgb((hue + i * 0.11) % 1, 0.85, 0.5) : cols[mode];
+      const col = mode === 4 ? rainbowRgb(hue + i * 0.11, 0.85, 0.5) : cols[mode];
       ctx.save();
       ctx.rotate(b.a);
       const r = b.r0 - b.travel * f;

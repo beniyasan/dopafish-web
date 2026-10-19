@@ -451,8 +451,11 @@ export class UI {
 
     // 待機中の常時演出: 激アツ(赤以上の保留・連続予告) / RUSH / 虹保留
     const idleish = ["idle", "charging", "flying", "waiting"].includes(m.phase);
-    const rainbowHold = idleish && !m.rushActive && m.holds.some((h) => h.color >= 5);
-    const nowHot = (m.phase === "flying" || m.phase === "waiting") && (m.currentHold?.color ?? 0) >= 3;
+    // 投げた保留は m.holds から m.currentHold に移るので、投げている最中はそちらも見る
+    const inCast = m.phase === "flying" || m.phase === "waiting";
+    const rainbowHold = idleish && !m.rushActive
+      && (m.holds.some((h) => h.color >= 5) || (inCast && (m.currentHold?.color ?? 0) >= 5));
+    const nowHot = inCast && (m.currentHold?.color ?? 0) >= 3;
     const hotLook = idleish && !m.rushActive && !rainbowHold
       && ((m.holds[0]?.color ?? 0) >= 3 || m.renzokuStep >= 2 || nowHot);
     const lookKey = `${hotLook}:${m.rushActive}:${rainbowHold}:${idleish}`;
@@ -464,7 +467,9 @@ export class UI {
       this.scene.setAmbient(m.rushActive && idleish ? 3 : rainbowHold ? 4 : hotLook ? 2 : 0);
     }
     // 激アツのカットイン: 同じ保留では1回だけ(投げるたびに出し直さない)
-    const hotSeq = hotLook ? (nowHot ? m.currentHold?.seq : m.holds[0]?.seq) ?? -1 : null;
+    // 連続予告の最終段(renzokuStep 3)は今投げている保留が当該なので、色が赤未満でもそちらに付ける
+    const currentIsHot = nowHot || (inCast && m.renzokuStep === 3);
+    const hotSeq = hotLook ? (currentIsHot ? m.currentHold?.seq : m.holds[0]?.seq) ?? -1 : null;
     if (hotSeq !== null && hotSeq !== this._hotSeq) {
       this._hotSeq = hotSeq;
       this._cutin("cutin", `<div class="ci-main">激アツ</div><div class="ci-sub">CHANCE UP</div>`, 1500);
