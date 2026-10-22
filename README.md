@@ -44,6 +44,29 @@ iOSアプリ「Dopagaki Fishing Collection」([beniyasan/dopafish](https://githu
 - navigator.vibrate — ハプティクス(対応端末のみ、トグル可)
 - localStorage — 図鑑・メダル・最高記録・強化レベル・活き餌・1日の進行・海の気配・ヌシの残りHP・触覚設定を保存
 
+### ゲームロジック(`js/model.js` と `js/model/`)
+
+`GameModel` の本体(状態・時計・投げ〜アタリの流れ)は `js/model.js`、機能ごとのメソッドは `js/model/` に分け、`GameModel.prototype` に取り込んでいます。
+
+| ファイル | 中身 |
+|---|---|
+| `model/store.js` | localStorage と魚図鑑 |
+| `model/shop.js` | 釣具屋(強化)と活き餌 |
+| `model/holds.js` | 抽選: 保留(先読み)・天井「海の気配」・レア度の決定 |
+| `model/day.js` | 1日(30投)・時間帯・天気・デイリー |
+| `model/omens.js` | 予告演出: 連続予告・鳥や魚群・じいさん・リーチの見た目 |
+| `model/reach.js` | リーチ: 発展・合わせ |
+| `model/fight.js` | ファイト: 連打 / 長押し / ヌシ / リズム / osu! 風 |
+| `model/catch.js` | 釣果と結果カード・逃げられたとき・RUSH・通常ED |
+
+### 振る舞いの回帰チェック
+
+```sh
+node tools/golden.mjs --check
+```
+
+実際の `GameModel` を Node で動かし(乱数・時計を固定、演出はスタブ)、6つのシナリオを自動プレイして、フェーズ遷移・釣果・スコア・RUSH などの列を `tools/golden.expected` と比べます。リファクタで振る舞いが変わっていないことの確認に使います。ゲームの振る舞いを意図して変えたときは `--update` で更新してください。
+
 ## デバッグ用URLパラメータ
 
 | パラメータ | 効果 |
